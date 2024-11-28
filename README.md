@@ -10,3 +10,7 @@ To try out the parser, ensure the Go programming language is installed, clone th
 go build .
 ./declarch apply -c test.conf
 ```
+
+You can find the test code in `cmds/apply.go` and the test data in `test.conf` and `testb.conf` (imported by `test.conf`).
+
+There is also an example DeclArch configuration in `config.conf`.
