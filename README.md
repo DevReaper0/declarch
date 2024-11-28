@@ -13,4 +13,25 @@ go build .
 
 You can find the test code in `cmds/apply.go` and the test data in `test.conf` and `testb.conf` (imported by `test.conf`).
 
+If you don't want to run it yourself, the test's output would be:
+```
+2
+[2]
+
+2
+[2]
+
+3
+[3]
+
+3, green, blue
+[3, green, blue red, green, blue]
+
+2, green, blue
+[2, green, blue]
+
+3, 26, Warsaw
+[3, 26, Warsaw Andrew, 21, Berlin Koichi, 18, Morioh]
+```
+
 There is also an example DeclArch configuration in `config.conf`.
