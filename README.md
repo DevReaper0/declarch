@@ -2,7 +2,7 @@
 
 This is a work-in-progress tool for declaratively managing an Arch Linux system.
 
-Currently, this repository contains only a parser and the framework for the CLI.
+Currently, this repository contains a parser and support for installing packages, but not users, default applications, or application configurations.
 
 To try out the parser, ensure the Go programming language is installed, clone this repository, and run:
 
@@ -34,4 +34,4 @@ If you don't want to run it yourself, the test's output would be:
 [3, 26, Warsaw Andrew, 21, Berlin Koichi, 18, Morioh]
 ```
 
-There is also an example DeclArch configuration in `config.conf`.
+There is also an example DeclArch configuration in `default_declarch.conf`.

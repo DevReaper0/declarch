@@ -12,6 +12,13 @@ type Section struct {
 	Variables map[string]string
 }
 
+func isAlphaNum(c byte) bool {
+	return (c >= '0' && c <= '9') ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= 'a' && c <= 'z') ||
+		c == '_'
+}
+
 func formatLine(line string) string {
 	line = strings.TrimSpace(line)
 
@@ -27,7 +34,7 @@ func formatLine(line string) string {
 	return line
 }
 
-func getLines(input string) []string {
+func getLines(input string) ([]string, error) {
 	lines := strings.Split(input, "\n")
 	var processedLines []string
 
@@ -41,36 +48,35 @@ func getLines(input string) []string {
 		if len(parts) == 2 && strings.TrimSpace(parts[0]) == "source" {
 			sourcePath := strings.TrimSpace(parts[1])
 			sourcePath, _ = filepath.Abs(sourcePath)
-			sourcePath, _ = filepath.EvalSymlinks(sourcePath)
 
-			sourceContent, err := os.ReadFile(sourcePath)
+			sourcedContent, err := os.ReadFile(sourcePath)
 			if err != nil {
-				panic(err)
+				return nil, err
 			}
 
-			processedLines = append(processedLines, getLines(string(sourceContent))...)
+			sourcedLines, err := getLines(string(sourcedContent))
+			if err != nil {
+				return nil, err
+			}
+			processedLines = append(processedLines, sourcedLines...)
 		} else {
 			processedLines = append(processedLines, line)
 		}
 	}
 
-	return processedLines
+	return processedLines, nil
 }
 
-func ParseFile(path string) *Section {
-	path, _ = filepath.Abs(path)
-	path, _ = filepath.EvalSymlinks(path)
-	os.Chdir(filepath.Dir(path))
-
+func ParseFile(path string) (*Section, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return Parse(string(content))
 }
 
-func Parse(input string) *Section {
+func Parse(input string) (*Section, error) {
 	globalSection := &Section{
 		Values:    make(map[string][]string),
 		Sections:  make(map[string][]*Section),
@@ -80,7 +86,10 @@ func Parse(input string) *Section {
 	var currentSection *Section
 	var sectionStack []*Section
 
-	lines := getLines(input)
+	lines, err := getLines(input)
+	if err != nil {
+		return nil, err
+	}
 	for _, line := range lines {
 		line = formatLine(line)
 		if line == "" {
@@ -138,7 +147,7 @@ func Parse(input string) *Section {
 
 	globalSection.substituteVariables(make(map[string]string))
 
-	return globalSection
+	return globalSection, nil
 }
 
 func (section *Section) substituteVariables(parentVariables map[string]string) {
@@ -155,7 +164,23 @@ func (section *Section) substituteVariables(parentVariables map[string]string) {
 	for k, v := range section.Values {
 		for i, value := range v {
 			for varName, varValue := range variables {
-				value = strings.ReplaceAll(value, "$"+varName, varValue)
+				wordToReplace := "$" + varName
+				index := strings.Index(value, wordToReplace)
+				for index != -1 {
+					beforeOk := index == 0 || !isAlphaNum(value[index-1])
+					afterPos := index + len(wordToReplace)
+					afterOk := afterPos == len(value) || !isAlphaNum(value[afterPos])
+					if beforeOk && afterOk {
+						value = value[:index] + varValue + value[afterPos:]
+						index = strings.Index(value, wordToReplace)
+					} else {
+						nextIndex := strings.Index(value[index+1:], wordToReplace)
+						if nextIndex == -1 {
+							break
+						}
+						index += 1 + nextIndex
+					}
+				}
 			}
 			section.Values[k][i] = value
 		}
@@ -219,4 +244,30 @@ func (section *Section) GetAll(path string) []string {
 	}
 
 	return values
+}
+
+func SplitValues(value string) []string {
+	values := strings.Split(value, ",")
+	for i, v := range values {
+		values[i] = strings.TrimSpace(v)
+	}
+	return values
+}
+
+func (section *Section) Marshal(indent int) string {
+	output := ""
+	indentStr := strings.Repeat("  ", indent)
+	for k, v := range section.Values {
+		for _, value := range v {
+			output += indentStr + k + " = " + value + "\n"
+		}
+	}
+	for k, v := range section.Sections {
+		for _, subSection := range v {
+			output += indentStr + k + " {\n"
+			output += subSection.Marshal(indent + 1)
+			output += indentStr + "}\n"
+		}
+	}
+	return output
 }
