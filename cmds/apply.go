@@ -163,6 +163,9 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	//
 
 	modules.PrivilegeEscalationCommand = section.GetFirst("essentials/privilige_escalation", "sudo")
+	if modules.PrivilegeEscalationCommand == "su" {
+		modules.PrivilegeEscalationCommand = "su -c"
+	}
 
 	// TODO: Pacman configuration:
 	// TODO: color

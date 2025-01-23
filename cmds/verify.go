@@ -56,7 +56,7 @@ var verifyCmd = &cobra.Command{
 }
 
 func Verify(section *parser.Section) string {
-	if v := VerifyString(section.GetFirst("essentials/privilige_escalation", "sudo"), "sudo", "doas"); v != "" {
+	if v := VerifyString(section.GetFirst("essentials/privilige_escalation", "sudo"), "sudo", "doas", "pkexec", "su"); v != "" {
 		return v
 	}
 
