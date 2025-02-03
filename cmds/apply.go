@@ -12,9 +12,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DevReaper0/declarch/modules"
+	"github.com/DevReaper0/declarch/modules/config/ini"
 	"github.com/DevReaper0/declarch/parser"
 	"github.com/DevReaper0/declarch/utils"
 )
+
+// The default tag includes everything without the exclamation mark.
+var tags = []string{"+default"}
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -160,17 +164,15 @@ var applyCmd = &cobra.Command{
 }
 
 func Apply(section *parser.Section, previousSection *parser.Section) error {
-	//
-
 	modules.PrivilegeEscalationCommand = section.GetFirst("essentials/privilige_escalation", "sudo")
 	if modules.PrivilegeEscalationCommand == "su" {
 		modules.PrivilegeEscalationCommand = "su -c"
 	}
 
-	// TODO: Pacman configuration:
-	// TODO: color
-	// TODO: parallel_downloads
-	// TODO: repositories
+	// Pacman configuration
+	if err := configurePacman(section); err != nil {
+		return fmt.Errorf("error configuring pacman: %w", err)
+	}
 
 	if err := modules.PacmanInstall("base base-devel git"); err != nil {
 		return err
@@ -181,7 +183,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
 
-	addedKernels, removedKernels := utils.GetDifferences(section.GetAll("essentials/kernel"), previousSection.GetAll("essentials/kernel"))
+	addedKernels, removedKernels := utils.GetDifferences(getAll(section, "essentials/kernel"), getAll(previousSection, "essentials/kernel"))
 	// Installing a kernel before removing any just to be safe
 	if len(addedKernels)-1 >= 0 {
 		if err := modules.PacmanInstall(addedKernels[len(addedKernels)-1]); err != nil {
@@ -211,7 +213,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		}
 	}
 
-	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(section.GetAll("packages/pacman/package"), previousSection.GetAll("packages/pacman/package"))
+	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(getAll(section, "packages/pacman/package"), getAll(previousSection, "packages/pacman/package"))
 	if len(removedPacmanPackages) > 0 {
 		if err := modules.PacmanRemove(strings.Join(removedPacmanPackages, " ")); err != nil {
 			return err
@@ -236,7 +238,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		}
 	}
 
-	addedAurPackages, removedAurPackages := utils.GetDifferences(section.GetAll("packages/aur/package"), previousSection.GetAll("packages/aur/package"))
+	addedAurPackages, removedAurPackages := utils.GetDifferences(getAll(section, "packages/aur/package"), getAll(previousSection, "packages/aur/package"))
 	if len(removedAurPackages) > 0 {
 		if err := modules.PacmanRemove(strings.Join(removedAurPackages, " ")); err != nil {
 			return err
@@ -265,8 +267,99 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	return nil
 }
 
+func configurePacman(section *parser.Section) error {
+	pacmanConfigPath := "/etc/pacman.conf"
+	pacmanParser := ini.NewPacmanParser()
+	pacmanPatcher := &ini.Patcher{}
+
+	pacmanModifications := map[string]interface{}{}
+	addPacmanOption := func(key, value string) {
+		if value != "" {
+			if _, ok := pacmanModifications["options"]; !ok {
+				pacmanModifications["options"] = map[string]interface{}{}
+			}
+			pacmanModifications["options"].(map[string]interface{})[key] = value
+		}
+	}
+
+	addPacmanOption("Color", section.GetFirst("packages/pacman/color", ""))
+	addPacmanOption("ParallelDownloads", section.GetFirst("packages/pacman/parallel_downloads", ""))
+	addPacmanOption("VerbosePkgLists", section.GetFirst("packages/pacman/verbose_pkg_lists", ""))
+	addPacmanOption("ILoveCandy", section.GetFirst("packages/pacman/i_love_candy", ""))
+
+	if len(pacmanModifications) > 0 {
+		if err := pacmanPatcher.Patch(pacmanParser, pacmanConfigPath, pacmanModifications); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// This function is the same as section.GetAll(), but if an item has spaces, it will be split into multiple items.
+// It also supports tags. For example, `package = linux-headers linux-firmware, +bare` needs to be split into `linux-headers` and `linux-firmware`.
+func getAll(section *parser.Section, key string) []string {
+	items := section.GetAll(key)
+	result := []string{}
+	for i := 0; i < len(items); i++ {
+		included := true
+
+		parts := strings.SplitN(items[i], ",", 2)
+
+		// Check for tagging, e.g., "pkg, +!bare" etc.
+		if len(parts) > 1 {
+			tagPart := strings.TrimSpace(parts[1])
+			linkedTags := strings.Fields(tagPart)
+
+			for _, linkedTag := range linkedTags {
+				if !strings.HasPrefix(linkedTag, "+") {
+					// TODO: Error in verification
+					continue
+				}
+
+				tagName := strings.TrimPrefix(linkedTag, "+")
+				isRequired := false
+				if strings.HasPrefix(tagName, "!") {
+					included = false
+					tagName = strings.TrimPrefix(tagName, "!")
+					isRequired = true
+				}
+
+				for _, tag := range tags {
+					if tag == "+"+tagName || (!isRequired && tag == "+default") {
+						included = true
+					} else if tag == "-"+tagName || (!isRequired && tag == "-default") {
+						included = false
+					}
+				}
+			}
+		} else {
+			for _, tag := range tags {
+				if tag == "+default" {
+					included = true
+				} else if tag == "-default" {
+					included = false
+				}
+			}
+		}
+
+		if included {
+			valuesPart := strings.TrimSpace(parts[0])
+			values := strings.Fields(valuesPart)
+
+			result = append(result, values...)
+		}
+	}
+	return result
+}
+
 func init() {
 	applyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file (default is /etc/declarch/declarch.conf)")
+	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag")
+
+	providedTags := []string{}
+	applyCmd.PersistentFlags().StringSliceVar(&providedTags, "tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
+	tags = append(tags, providedTags...)
 
 	rootCmd.AddCommand(applyCmd)
 }
