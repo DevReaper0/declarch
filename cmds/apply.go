@@ -287,6 +287,26 @@ func configurePacman(section *parser.Section) error {
 	addPacmanOption("VerbosePkgLists", section.GetFirst("packages/pacman/verbose_pkg_lists", ""))
 	addPacmanOption("ILoveCandy", section.GetFirst("packages/pacman/i_love_candy", ""))
 
+	// Add pacman repositories
+	repositories := getAllSections(section, "packages/pacman/repository")
+	for _, repo := range repositories {
+		repoName := repo.GetFirst("name", "")
+		if repoName != "" {
+			repoModifications := map[string]interface{}{
+				"Include": repo.GetFirst("include", ""),
+				"Server":  repo.GetFirst("server", ""),
+			}
+			if _, ok := pacmanModifications[repoName]; !ok {
+				pacmanModifications[repoName] = map[string]interface{}{}
+			}
+			for key, value := range repoModifications {
+				if value != "" {
+					pacmanModifications[repoName].(map[string]interface{})[key] = value
+				}
+			}
+		}
+	}
+
 	if len(pacmanModifications) > 0 {
 		if err := pacmanPatcher.Patch(pacmanParser, pacmanConfigPath, pacmanModifications); err != nil {
 			return err
@@ -294,6 +314,32 @@ func configurePacman(section *parser.Section) error {
 	}
 
 	return nil
+}
+
+func getAllSections(section *parser.Section, key string) []*parser.Section {
+	parts := strings.Split(key, "/")
+	if len(parts) == 0 {
+		return []*parser.Section{}
+	}
+
+	if len(parts) == 1 {
+		if sections, ok := section.Sections[parts[0]]; ok {
+			return sections
+		}
+		return []*parser.Section{}
+	}
+
+	subSectionName := parts[0]
+	subSectionPath := strings.TrimPrefix(key, subSectionName+"/")
+
+	sections := []*parser.Section{}
+	if subSections, ok := section.Sections[subSectionName]; ok {
+		for _, subSection := range subSections {
+			sections = append(sections, getAllSections(subSection, subSectionPath)...)
+		}
+	}
+
+	return sections
 }
 
 // This function is the same as section.GetAll(), but if an item has spaces, it will be split into multiple items.
