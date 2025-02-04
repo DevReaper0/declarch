@@ -267,6 +267,14 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	return nil
 }
 
+// transformBooleanOption converts a boolean string ("true"/"false") to its pacman boolean representation.
+func transformBooleanOption(value string) string {
+	if strings.ToLower(value) == "true" {
+		return "~BOOL"
+	}
+	return ""
+}
+
 func configurePacman(section *parser.Section) error {
 	pacmanConfigPath := "/etc/pacman.conf"
 	pacmanParser := ini.NewPacmanParser()
@@ -282,10 +290,10 @@ func configurePacman(section *parser.Section) error {
 		}
 	}
 
-	addPacmanOption("Color", section.GetFirst("packages/pacman/color", ""))
+	addPacmanOption("Color", transformBooleanOption(section.GetFirst("packages/pacman/color", "false")))
 	addPacmanOption("ParallelDownloads", section.GetFirst("packages/pacman/parallel_downloads", ""))
-	addPacmanOption("VerbosePkgLists", section.GetFirst("packages/pacman/verbose_pkg_lists", ""))
-	addPacmanOption("ILoveCandy", section.GetFirst("packages/pacman/i_love_candy", ""))
+	addPacmanOption("VerbosePkgLists", transformBooleanOption(section.GetFirst("packages/pacman/verbose_pkg_lists", "false")))
+	addPacmanOption("ILoveCandy", transformBooleanOption(section.GetFirst("packages/pacman/i_love_candy", "false")))
 
 	// Add pacman repositories
 	repositories := getAllSections(section, "packages/pacman/repository")

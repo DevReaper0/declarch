@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
+const rootMarker = "<root>"
+
 type Options struct {
 	AllowInlineComment bool
+	AllowBooleanKeys   bool
 }
 
 type Parser struct {
@@ -20,7 +23,7 @@ func NewParser(opts Options) *Parser {
 }
 
 func (p *Parser) Parse(filePath string) (*Node, error) {
-	root := NewNode(NodeUnknown, "", "")
+	root := NewNode(NodeSection, rootMarker, "")
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -54,6 +57,15 @@ func (p *Parser) Parse(filePath string) (*Node, error) {
 			root.Children = append(root.Children, sec)
 			currentSection = sec
 		default:
+			if p.options.AllowBooleanKeys && !strings.Contains(line, "=") {
+				boolNode := NewNode(NodeBoolean, trimmed, "")
+				if currentSection == nil {
+					root.Children = append(root.Children, boolNode)
+				} else {
+					currentSection.Children = append(currentSection.Children, boolNode)
+				}
+				continue
+			}
 			key, val, inlineComment := p.splitKeyValueWithComment(trimmed)
 			keyNode := NewNode(NodeKey, key, val)
 			keyNode.InlineComment = inlineComment
@@ -110,7 +122,10 @@ func (p *Parser) buildLines(node *Node) []string {
 		case NodeBlank:
 			lines = append(lines, child.Key)
 		case NodeSection:
-			lines = append(lines, fmt.Sprintf("[%s]", child.Key))
+			// Don't output section marker for root node
+			if child.Key != rootMarker {
+				lines = append(lines, fmt.Sprintf("[%s]", child.Key))
+			}
 			secLines := p.buildLines(child)
 			lines = append(lines, secLines...)
 		case NodeKey:
@@ -119,6 +134,8 @@ func (p *Parser) buildLines(node *Node) []string {
 				line += child.InlineComment
 			}
 			lines = append(lines, line)
+		case NodeBoolean:
+			lines = append(lines, child.Key)
 		default:
 		}
 	}
