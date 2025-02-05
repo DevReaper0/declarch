@@ -74,7 +74,7 @@ var initCmd = &cobra.Command{
 }
 
 func init() {
-	initCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file (default is /etc/declarch/declarch.conf)")
+	initCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file")
 
 	rootCmd.AddCommand(initCmd)
 }

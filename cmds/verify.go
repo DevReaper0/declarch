@@ -145,7 +145,7 @@ func VerifyString(value string, allowedValues ...string) string {
 }
 
 func init() {
-	verifyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file (default is /etc/declarch/declarch.conf)")
+	verifyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file")
 
 	rootCmd.AddCommand(verifyCmd)
 }

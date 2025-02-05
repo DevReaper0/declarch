@@ -414,7 +414,7 @@ func getAll(section *parser.Section, key string) []string {
 }
 
 func init() {
-	applyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file (default is /etc/declarch/declarch.conf)")
+	applyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file")
 	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag")
 
 	providedTags := []string{}
