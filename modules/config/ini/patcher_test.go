@@ -24,7 +24,7 @@ Key1 = Value1
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"Key1": "NewValue1", // Modify
+			"Key1": "NewValue1",
 		},
 	}
 
@@ -34,6 +34,36 @@ Key1 = Value1
 	expected := `
 [section]
 Key1 = NewValue1
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_EmptyValue(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_empty_value.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[section]
+Key1 = Value1
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"section": map[string]interface{}{
+			"Key1": "~EMPTY",
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+[section]
+Key1 =
 `
 
 	resultBytes, _ := os.ReadFile(testFile)
@@ -55,7 +85,7 @@ Key2 = Value2
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"Key2": "", // Remove
+			"Key2": "",
 		},
 	}
 
@@ -85,7 +115,7 @@ Key1 = Value1
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"KeyNew": "Value3", // Add
+			"KeyNew": "Value3",
 		},
 	}
 
@@ -227,9 +257,9 @@ Key = Value
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"ExistingBool": "",         // Remove
-			"NewBool":      "~BOOL",    // Add
-			"Key":          "NewValue", // Modify normal key
+			"ExistingBool": "",
+			"NewBool":      "~BOOL",
+			"Key":          "NewValue",
 		},
 	}
 
@@ -288,9 +318,18 @@ func TestINIPatcher_UncommentSection(t *testing.T) {
 [active]
 Key = Value
 
+#[qwe]
+#Qwe = 123
+
 # [commented]
 #Key1 = Value1
 #Key2 = Value2
+
+#[asd]
+#Asd = 456
+
+[zxc]
+Zxc = 789
 `
 	os.WriteFile(testFile, []byte(original), 0o644)
 
@@ -307,9 +346,18 @@ Key = Value
 [active]
 Key = Value
 
+#[qwe]
+#Qwe = 123
+
 [commented]
 Key1 = NewValue1
-Key2 = Value2
+#Key2 = Value2
+
+#[asd]
+#Asd = 456
+
+[zxc]
+Zxc = 789
 `
 
 	resultBytes, _ := os.ReadFile(testFile)

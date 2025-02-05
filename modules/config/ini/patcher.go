@@ -2,6 +2,7 @@ package ini
 
 import (
 	"os"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -32,12 +33,6 @@ func (p *Patcher) Patch(parser *Parser, filePath string, modifications map[strin
 // If the modification value is a string, it updates/removes a key in the current node.
 // If the modification value is a map, it recurses into the corresponding section.
 func (p *Patcher) applyModifications(parser *Parser, node *Node, mods map[string]interface{}) {
-	commentChar := parser.options.CommentChar
-	// Uncomment sections
-	if p.ReplaceComments {
-		// Note: Commented out sections will be extracted in findOrCreateSectionNode.
-	}
-
 	// First pass: process modifications for keys already present.
 	for key, mod := range mods {
 		if val, ok := mod.(string); ok { // key-value update
@@ -47,10 +42,8 @@ func (p *Patcher) applyModifications(parser *Parser, node *Node, mods map[string
 				} else {
 					p.modifyExistingKey(node, key, val)
 				}
-			} else if p.ReplaceComments && p.hasCommentedKey(node, key, commentChar) {
-				p.replaceCommentedKey(node, key, val, commentChar)
-			} else {
-				// Skip new keys; process in second pass.
+			} else if p.ReplaceComments && p.hasCommentedKey(node, key, parser.options) {
+				p.replaceCommentedKey(node, key, val, parser.options)
 			}
 		}
 	}
@@ -58,7 +51,7 @@ func (p *Patcher) applyModifications(parser *Parser, node *Node, mods map[string
 	var newKeys []string
 	for key, mod := range mods {
 		if _, ok := mod.(string); ok {
-			if !p.hasKey(node, key) && !(p.ReplaceComments && p.hasCommentedKey(node, key, commentChar)) {
+			if !p.hasKey(node, key) && !(p.ReplaceComments && p.hasCommentedKey(node, key, parser.options)) {
 				newKeys = append(newKeys, key)
 			}
 		}
@@ -71,6 +64,9 @@ func (p *Patcher) applyModifications(parser *Parser, node *Node, mods map[string
 			// Removing non-existent key: ignore.
 			continue
 		}
+		if val == "~EMPTY" {
+			val = ""
+		}
 		if parser.options.AllowBooleanKeys && strings.HasSuffix(val, "~BOOL") {
 			p.insertBooleanBeforeBlankLines(node, key)
 		} else {
@@ -80,13 +76,16 @@ func (p *Patcher) applyModifications(parser *Parser, node *Node, mods map[string
 	// Then, process section modifications (map values)
 	for key, mod := range mods {
 		if secMods, ok := mod.(map[string]interface{}); ok { // section update
-			secNode := p.findOrCreateSectionNode(node, key, commentChar)
+			secNode := p.findOrCreateSectionNode(node, key, parser.options)
 			p.applyModifications(parser, secNode, secMods)
 		}
 	}
 }
 
 func (p *Patcher) modifyExistingKey(sectionNode *Node, key, value string) {
+	if value == "~EMPTY" {
+		value = ""
+	}
 	for _, child := range sectionNode.Children {
 		if (child.Type == NodeKey || child.Type == NodeBoolean) && child.Key == key {
 			child.Value = value
@@ -129,7 +128,7 @@ func (p *Patcher) insertBooleanBeforeBlankLines(sectionNode *Node, key string) {
 	)
 }
 
-func (p *Patcher) findOrCreateSectionNode(root *Node, name string, commentChar string) *Node {
+func (p *Patcher) findOrCreateSectionNode(root *Node, name string, opts Options) *Node {
 	// Determine full section name based on parent's type and name
 	var fullName string
 	if root.Type == NodeSection && root.Key != rootMarker {
@@ -145,56 +144,32 @@ func (p *Patcher) findOrCreateSectionNode(root *Node, name string, commentChar s
 	}
 	// If ReplaceComments is enabled, look for a commented section header within immediate child sections.
 	if p.ReplaceComments {
-		for _, sectionNode := range root.Children {
-			if sectionNode.Type != NodeSection {
-				continue
+		sectionNodes := []*Node{}
+		for _, child := range root.Children {
+			if child.Type == NodeSection {
+				sectionNodes = append(sectionNodes, child)
 			}
+		}
+
+		for _, sectionNode := range sectionNodes {
+			var currentSectionNode *Node
 			for idx, child := range sectionNode.Children {
 				if child.Type == NodeComment {
 					trimmedLine := strings.TrimSpace(child.Key)
-					if strings.HasPrefix(trimmedLine, commentChar) {
-						uncommented := strings.TrimSpace(trimmedLine[len(commentChar):])
+					if strings.HasPrefix(trimmedLine, opts.CommentChar) {
+						uncommented := strings.TrimSpace(trimmedLine[len(opts.CommentChar):])
 						if strings.HasPrefix(uncommented, "[") && strings.HasSuffix(uncommented, "]") {
 							secName := strings.TrimSuffix(strings.TrimPrefix(uncommented, "["), "]")
 							if secName == name {
-								// Found commented section header.
-								// Move all nodes from this header until the end.
-								newSectionBlock := sectionNode.Children[idx:]
-								// Remove them from current section.
+								newSectionBlock := sectionNode.Children[idx+1:]
 								sectionNode.Children = sectionNode.Children[:idx]
-								// Create a new section node.
-								sec := NewNode(NodeSection, fullName, "")
-								// Process newSectionBlock: skip header, then trim spaces from each comment.
-								for i, n := range newSectionBlock {
-									if i == 0 { // skip header comment
-										continue
-									}
-									if n.Type == NodeComment {
-										uncommented := strings.TrimSpace(strings.TrimPrefix(n.Key, commentChar))
-										if strings.Contains(uncommented, "=") {
-											parts := strings.SplitN(uncommented, "=", 2)
-											k := strings.TrimSpace(parts[0])
-											v := strings.TrimSpace(parts[1])
-											newKey := NewNode(NodeKey, k, v)
-											sec.Children = append(sec.Children, newKey)
-										} else {
-											newBool := NewNode(NodeBoolean, uncommented, "")
-											sec.Children = append(sec.Children, newBool)
-										}
-									} else {
-										sec.Children = append(sec.Children, n)
-									}
-								}
-								// Insert the new section node into root.
-								idxRoot := len(root.Children)
-								for i := len(root.Children) - 1; i >= 0; i-- {
-									if root.Children[i].Type != NodeBlank && root.Children[i].Type != NodeComment {
-										idxRoot = i + 1
-										break
-									}
-								}
-								root.Children = append(root.Children[:idxRoot], append([]*Node{sec}, root.Children[idxRoot:]...)...)
-								return sec
+
+								currentSectionNode = NewNode(NodeSection, secName, "")
+								currentSectionNode.Children = newSectionBlock
+								idxRoot := slices.Index(root.Children, sectionNode)
+								root.Children = append(root.Children[:idxRoot+1], append([]*Node{currentSectionNode}, root.Children[idxRoot+1:]...)...)
+
+								return currentSectionNode
 							}
 						}
 					}
@@ -241,12 +216,12 @@ func (p *Patcher) hasKey(sectionNode *Node, key string) bool {
 	return false
 }
 
-func (p *Patcher) hasCommentedKey(sectionNode *Node, key, commentChar string) bool {
+func (p *Patcher) hasCommentedKey(sectionNode *Node, key string, opts Options) bool {
 	for _, child := range sectionNode.Children {
 		if child.Type == NodeComment {
 			trimmed := strings.TrimSpace(child.Key)
-			if strings.HasPrefix(trimmed, commentChar) {
-				uncommented := strings.TrimSpace(trimmed[len(commentChar):])
+			if strings.HasPrefix(trimmed, opts.CommentChar) {
+				uncommented := strings.TrimSpace(trimmed[len(opts.CommentChar):])
 				if strings.HasPrefix(uncommented, key) {
 					rest := strings.TrimPrefix(uncommented, key)
 					if rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "=") {
@@ -259,16 +234,16 @@ func (p *Patcher) hasCommentedKey(sectionNode *Node, key, commentChar string) bo
 	return false
 }
 
-func (p *Patcher) replaceCommentedKey(sectionNode *Node, key, value, commentChar string) {
+func (p *Patcher) replaceCommentedKey(sectionNode *Node, key, value string, opts Options) {
 	for i, child := range sectionNode.Children {
 		if child.Type == NodeComment {
 			trimmed := strings.TrimSpace(child.Key)
-			if strings.HasPrefix(trimmed, commentChar) {
-				uncommented := strings.TrimSpace(trimmed[len(commentChar):])
+			if strings.HasPrefix(trimmed, opts.CommentChar) {
+				uncommented := strings.TrimSpace(trimmed[len(opts.CommentChar):])
 				if strings.HasPrefix(uncommented, key) {
 					rest := strings.TrimPrefix(uncommented, key)
 					if rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "=") {
-						if value == "~BOOL" {
+						if opts.AllowBooleanKeys && value == "~BOOL" {
 							sectionNode.Children[i] = NewNode(NodeBoolean, key, "")
 						} else {
 							// New key node is created without existing raw formatting.
