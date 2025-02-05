@@ -1,4 +1,4 @@
-package ini
+package ini_test
 
 import (
 	"os"
@@ -6,79 +6,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/DevReaper0/declarch/modules/config/ini"
 )
 
-func TestINIPatcher_VariedModifications(t *testing.T) {
-	opts := Options{
-		AllowInlineComment: true,
-	}
-	parser := NewParser(opts)
-	patcher := &Patcher{}
-	testFile := "test_patch.conf"
-	defer os.Remove(testFile)
-
-	original := `
-# Global comment
-[alpha]
-Key1 = Value1 # comment1
-Key2 = Value2
-Key3 = Value3
-
-
-[beta]
-KeyA = A1
-KeyB = B1
-`
-	os.WriteFile(testFile, []byte(original), 0o644)
-
-	modifications := map[string]interface{}{
-		"alpha": map[string]interface{}{
-			"Key1":   "NewValue1", // modify
-			"Key2":   "",          // remove
-			"KeyNew": "AddedValue",
-			"subalpha": map[string]interface{}{ // new subsection
-				"KeySub": "SubValue",
-			},
-		},
-		"gamma": map[string]interface{}{ // new section
-			"KeyX": "ValueX",
-		},
-	}
-
-	err := patcher.Patch(parser, testFile, modifications)
-	assert.NoError(t, err)
-
-	resultBytes, _ := os.ReadFile(testFile)
-	result := strings.TrimSpace(string(resultBytes))
-
-	expected := `
-# Global comment
-[alpha]
-Key1 = NewValue1 # comment1
-Key3 = Value3
-KeyNew = AddedValue
-
-[alpha.subalpha]
-KeySub = SubValue
-
-
-[beta]
-KeyA = A1
-KeyB = B1
-
-[gamma]
-KeyX = ValueX
-`
-	assert.Equal(t, strings.TrimSpace(expected), result)
-}
-
-func TestINIPatcher_NoChanges(t *testing.T) {
-	opts := Options{
-		AllowInlineComment: true,
-	}
-	parser := NewParser(opts)
-	patcher := &Patcher{}
-	testFile := "test_no_change.conf"
+func TestINIPatcher_ModifyKey(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_modify_key.conf"
 	defer os.Remove(testFile)
 
 	original := `
@@ -87,98 +22,296 @@ Key1 = Value1
 `
 	os.WriteFile(testFile, []byte(original), 0o644)
 
-	modifications := map[string]interface{}{}
+	modifications := map[string]interface{}{
+		"section": map[string]interface{}{
+			"Key1": "NewValue1", // Modify
+		},
+	}
 
 	err := patcher.Patch(parser, testFile, modifications)
 	assert.NoError(t, err)
 
+	expected := `
+[section]
+Key1 = NewValue1
+`
+
 	resultBytes, _ := os.ReadFile(testFile)
-	result := strings.TrimSpace(string(resultBytes))
-	assert.Equal(t, strings.TrimSpace(original), result)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
 }
 
-func TestINIPatcher_BooleanKeyPreserved(t *testing.T) {
-	opts := Options{
-		AllowBooleanKeys: true,
-	}
-	parser := NewParser(opts)
-	patcher := &Patcher{}
-	testFile := "test_boolean_patch.conf"
+func TestINIPatcher_RemoveKey(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_remove_key.conf"
 	defer os.Remove(testFile)
 
 	original := `
 [section]
-KeyBoolean
-KeyNormal = Value
+Key1 = Value1
+Key2 = Value2
 `
 	os.WriteFile(testFile, []byte(original), 0o644)
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"KeyNew": "NewVal",
+			"Key2": "", // Remove
 		},
 	}
+
 	err := patcher.Patch(parser, testFile, modifications)
 	assert.NoError(t, err)
 
-	// Parse the result and verify exact structure
-	root, err := parser.Parse(testFile)
-	assert.NoError(t, err)
-
-	// Verify the final generated content
 	expected := `
 [section]
-KeyBoolean
-KeyNormal = Value
-KeyNew = NewVal`
+Key1 = Value1
+`
 
-	generated, err := parser.Generate(root)
-	assert.NoError(t, err)
-	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(generated)))
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
 }
 
-func TestINIPatcher_BooleanKeyOperations(t *testing.T) {
-	opts := Options{
-		AllowBooleanKeys: true,
+func TestINIPatcher_AddKey(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_add_key.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[section]
+Key1 = Value1
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"section": map[string]interface{}{
+			"KeyNew": "Value3", // Add
+		},
 	}
-	parser := NewParser(opts)
-	patcher := &Patcher{}
-	testFile := "test_bool_ops.conf"
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+[section]
+Key1 = Value1
+KeyNew = Value3
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_AddSection(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_add_section.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[existing]
+Key = Value
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"new_section": map[string]interface{}{
+			"NewKey": "NewValue",
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+[existing]
+Key = Value
+
+[new_section]
+NewKey = NewValue
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_AddSubsection(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_add_subsection.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[existing]
+Key = Value
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"existing": map[string]interface{}{
+			"subsection": map[string]interface{}{
+				"SubKey": "SubValue",
+			},
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+[existing]
+Key = Value
+
+[existing.subsection]
+SubKey = SubValue
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_PreserveComments(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_preserve_comments.conf"
+	defer os.Remove(testFile)
+
+	original := `
+# Header comment
+[section]
+Key1 = Value1 # inline comment
+Key2 = Value2
+
+# Section comment
+[other]
+KeyA = ValueA
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"section": map[string]interface{}{
+			"Key1": "NewValue1",
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+# Header comment
+[section]
+Key1 = NewValue1 # inline comment
+Key2 = Value2
+
+# Section comment
+[other]
+KeyA = ValueA
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_BooleanKeys(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowBooleanKeys: true})
+	patcher := &ini.Patcher{}
+	testFile := "test_boolean_keys.conf"
 	defer os.Remove(testFile)
 
 	original := `
 [section]
 ExistingBool
-KeyNormal = Value1
-AnotherBool
+Key = Value
 `
 	os.WriteFile(testFile, []byte(original), 0o644)
 
 	modifications := map[string]interface{}{
 		"section": map[string]interface{}{
-			"NewBool":      "~BOOL",    // add new boolean
-			"ExistingBool": "",         // remove existing boolean
-			"ThirdBool":    "~BOOL",    // add another boolean
-			"KeyNormal":    "NewValue", // modify normal key
+			"ExistingBool": "",         // Remove
+			"NewBool":      "~BOOL",    // Add
+			"Key":          "NewValue", // Modify normal key
 		},
 	}
 
 	err := patcher.Patch(parser, testFile, modifications)
 	assert.NoError(t, err)
 
-	// Parse the result and verify exact structure
-	root, err := parser.Parse(testFile)
-	assert.NoError(t, err)
-
-	// Verify the final generated content matches expected format
 	expected := `
 [section]
-KeyNormal = NewValue
-AnotherBool
+Key = NewValue
 NewBool
-ThirdBool`
+`
 
-	generated, err := parser.Generate(root)
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_ReplaceCommentedKey(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{ReplaceComments: true}
+	testFile := "test_replace_commented_key.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[section]
+#CommentedKey = OldValue
+ActiveKey = Value
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"section": map[string]interface{}{
+			"CommentedKey": "NewValue",
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
 	assert.NoError(t, err)
-	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(generated)))
+
+	expected := `
+[section]
+CommentedKey = NewValue
+ActiveKey = Value
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
+}
+
+func TestINIPatcher_UncommentSection(t *testing.T) {
+	parser := ini.NewParser(ini.Options{AllowInlineComment: true})
+	patcher := &ini.Patcher{ReplaceComments: true}
+	testFile := "test_uncomment_section.conf"
+	defer os.Remove(testFile)
+
+	original := `
+[active]
+Key = Value
+
+# [commented]
+#Key1 = Value1
+#Key2 = Value2
+`
+	os.WriteFile(testFile, []byte(original), 0o644)
+
+	modifications := map[string]interface{}{
+		"commented": map[string]interface{}{
+			"Key1": "NewValue1",
+		},
+	}
+
+	err := patcher.Patch(parser, testFile, modifications)
+	assert.NoError(t, err)
+
+	expected := `
+[active]
+Key = Value
+
+[commented]
+Key1 = NewValue1
+Key2 = Value2
+`
+
+	resultBytes, _ := os.ReadFile(testFile)
+	assert.Equal(t, strings.TrimSpace(expected), strings.TrimSpace(string(resultBytes)))
 }

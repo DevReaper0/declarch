@@ -12,6 +12,7 @@ const rootMarker = "<root>"
 type Options struct {
 	AllowInlineComment bool
 	AllowBooleanKeys   bool
+	CommentChar        string
 }
 
 type Parser struct {
@@ -19,6 +20,9 @@ type Parser struct {
 }
 
 func NewParser(opts Options) *Parser {
+	if opts.CommentChar == "" {
+		opts.CommentChar = "#"
+	}
 	return &Parser{options: opts}
 }
 
@@ -45,7 +49,7 @@ func (p *Parser) Parse(filePath string) (*Node, error) {
 			} else {
 				currentSection.Children = append(currentSection.Children, blankNode)
 			}
-		case strings.HasPrefix(trimmed, "#"):
+		case strings.HasPrefix(trimmed, p.options.CommentChar):
 			if currentSection == nil {
 				root.Children = append(root.Children, NewNode(NodeComment, line, ""))
 			} else {
@@ -66,9 +70,10 @@ func (p *Parser) Parse(filePath string) (*Node, error) {
 				}
 				continue
 			}
-			key, val, inlineComment := p.splitKeyValueWithComment(trimmed)
+			key, val, inlineComment := p.splitKeyValueWithComment(line)
 			keyNode := NewNode(NodeKey, key, val)
 			keyNode.InlineComment = inlineComment
+			keyNode.Raw = line // Preserve original formatting
 			if currentSection == nil {
 				root.Children = append(root.Children, keyNode)
 			} else {
@@ -97,7 +102,7 @@ func (p *Parser) splitKeyValue(line string) (string, string) {
 func (p *Parser) splitKeyValueWithComment(line string) (string, string, string) {
 	var inlineComment string
 	if p.options.AllowInlineComment {
-		if idx := strings.Index(line, "#"); idx != -1 {
+		if idx := strings.Index(line, p.options.CommentChar); idx != -1 {
 			start := idx
 			for start > 0 && (line[start-1] == ' ' || line[start-1] == '\t') {
 				start--
@@ -129,11 +134,15 @@ func (p *Parser) buildLines(node *Node) []string {
 			secLines := p.buildLines(child)
 			lines = append(lines, secLines...)
 		case NodeKey:
-			line := fmt.Sprintf("%s = %s", child.Key, child.Value)
-			if child.InlineComment != "" {
-				line += child.InlineComment
+			if child.Raw != "" {
+				lines = append(lines, child.Raw)
+			} else {
+				line := fmt.Sprintf("%s = %s", child.Key, child.Value)
+				if child.InlineComment != "" {
+					line += child.InlineComment
+				}
+				lines = append(lines, line)
 			}
-			lines = append(lines, line)
 		case NodeBoolean:
 			lines = append(lines, child.Key)
 		default:

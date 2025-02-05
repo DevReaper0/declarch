@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
@@ -269,7 +270,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 
 // transformBooleanOption converts a boolean string ("true"/"false") to its pacman boolean representation.
 func transformBooleanOption(value string) string {
-	if strings.ToLower(value) == "true" {
+	if val, err := strconv.ParseBool(value); err == nil && val {
 		return "~BOOL"
 	}
 	return ""
@@ -279,6 +280,11 @@ func configurePacman(section *parser.Section) error {
 	pacmanConfigPath := "/etc/pacman.conf"
 	pacmanParser := ini.NewPacmanParser()
 	pacmanPatcher := &ini.Patcher{}
+
+	replaceComments := section.GetFirst("config_parser/replace_comments", "true")
+	if val, err := strconv.ParseBool(replaceComments); err == nil && val {
+		pacmanPatcher.ReplaceComments = true
+	}
 
 	pacmanModifications := map[string]interface{}{}
 	addPacmanOption := func(key, value string) {

@@ -1,4 +1,4 @@
-package ini
+package ini_test
 
 import (
 	"os"
@@ -6,13 +6,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/DevReaper0/declarch/modules/config/ini"
 )
 
 func TestINIParser_GenerateWithInline(t *testing.T) {
-	opts := Options{
+	opts := ini.Options{
 		AllowInlineComment: true,
 	}
-	parser := NewParser(opts)
+	parser := ini.NewParser(opts)
 	testFile := "test_with_inline.conf"
 	defer os.Remove(testFile)
 
@@ -48,10 +50,10 @@ Key2 = Value2
 }
 
 func TestINIParser_GenerateWithoutInline(t *testing.T) {
-	opts := Options{
+	opts := ini.Options{
 		AllowInlineComment: false,
 	}
-	parser := NewParser(opts)
+	parser := ini.NewParser(opts)
 	testFile := "test_without_inline.conf"
 	defer os.Remove(testFile)
 
@@ -87,11 +89,11 @@ Key2 = Value2
 }
 
 func TestINIParser_BooleanKeys(t *testing.T) {
-	opts := Options{
+	opts := ini.Options{
 		AllowBooleanKeys:   true,
 		AllowInlineComment: true,
 	}
-	parser := NewParser(opts)
+	parser := ini.NewParser(opts)
 	testFile := "test_boolean_keys.conf"
 	defer os.Remove(testFile)
 
@@ -112,11 +114,11 @@ KeyWithEquals = Something
 }
 
 func TestINIParser_Subsections(t *testing.T) {
-	opts := Options{
+	opts := ini.Options{
 		AllowInlineComment: true,
 		AllowBooleanKeys:   true,
 	}
-	parser := NewParser(opts)
+	parser := ini.NewParser(opts)
 	testFile := "test_subsections.conf"
 	defer os.Remove(testFile)
 

@@ -21,6 +21,7 @@ type Node struct {
 	Value         string
 	InlineComment string
 	Children      []*Node
+	Raw           string
 }
 
 func NewNode(t NodeType, key, value string, children ...*Node) *Node {
@@ -40,11 +41,9 @@ func (n *Node) debugString(level int) string {
 	indent := strings.Repeat("  ", level)
 	var sb strings.Builder
 
-	// Write node type
 	sb.WriteString(indent)
 	sb.WriteString(n.Type.String())
 
-	// Add content based on node type
 	switch n.Type {
 	case NodeKey:
 		sb.WriteString(": ")
@@ -64,13 +63,11 @@ func (n *Node) debugString(level int) string {
 		}
 	}
 
-	// Write inline comment if present
 	if n.InlineComment != "" {
 		sb.WriteString(n.InlineComment)
 	}
 	sb.WriteString("\n")
 
-	// Write children recursively
 	for _, child := range n.Children {
 		sb.WriteString(child.debugString(level + 1))
 	}
