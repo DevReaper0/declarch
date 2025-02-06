@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,7 +20,7 @@ import (
 )
 
 // The default tag includes everything without the exclamation mark.
-var tags = []string{"+default"}
+var tags []string
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -27,6 +28,12 @@ var applyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		configPath, _ := cmd.Flags().GetString("config")
 		configPath, _ = filepath.Abs(configPath)
+
+		if bare, _ := cmd.PersistentFlags().GetBool("bare"); bare {
+			tags = append(tags, "-default", "+bare")
+		}
+
+		tags = append([]string{"+default"}, tags...)
 
 		if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
 			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -184,7 +191,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
 
-	addedKernels, removedKernels := utils.GetDifferences(getAll(section, "essentials/kernel"), getAll(previousSection, "essentials/kernel"))
+	addedKernels, removedKernels := utils.GetDifferences(getAllKernels(section, "essentials/kernel"), getAllKernels(previousSection, "essentials/kernel"))
 	// Installing a kernel before removing any just to be safe
 	if len(addedKernels)-1 >= 0 {
 		if err := modules.PacmanInstall(addedKernels[len(addedKernels)-1]); err != nil {
@@ -212,6 +219,10 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		if err := modules.PacmanInstall(addedBootloader[0]); err != nil {
 			return err
 		}
+	}
+	// TODO: Some way to disable installing efibootmgr if the bootloader doesn't use it??
+	if err := modules.PacmanInstall("efibootmgr"); err != nil {
+		return nil
 	}
 
 	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(getAll(section, "packages/pacman/package"), getAll(previousSection, "packages/pacman/package"))
@@ -301,6 +312,15 @@ func configurePacman(section *parser.Section) error {
 	addPacmanOption("VerbosePkgLists", transformBooleanOption(section.GetFirst("packages/pacman/verbose_pkg_lists", "false")))
 	addPacmanOption("ILoveCandy", transformBooleanOption(section.GetFirst("packages/pacman/i_love_candy", "false")))
 
+	builtinRepositories := []string{
+		"core-testing",
+		"core",
+		"extra-testing",
+		"extra",
+		"multilib-testing",
+		"multilib",
+	}
+
 	// Add pacman repositories
 	repositories := getAllSections(section, "packages/pacman/repository")
 	for _, repo := range repositories {
@@ -309,6 +329,9 @@ func configurePacman(section *parser.Section) error {
 			repoModifications := map[string]interface{}{
 				"Include": repo.GetFirst("include", ""),
 				"Server":  repo.GetFirst("server", ""),
+			}
+			if repoModifications["Include"] == "" && repoModifications["Server"] == "" && slices.Contains(builtinRepositories, repoName) {
+				repoModifications["Include"] = "/etc/pacman.d/mirrorlist"
 			}
 			if _, ok := pacmanModifications[repoName]; !ok {
 				pacmanModifications[repoName] = map[string]interface{}{}
@@ -356,6 +379,16 @@ func getAllSections(section *parser.Section, key string) []*parser.Section {
 	return sections
 }
 
+// This function is the same as getAll() but automatically adds the `+bare` tag to the last item.
+func getAllKernels(section *parser.Section, key string) []string {
+	kernels := getAll(section, key)
+	items := section.GetAll(key)
+	if len(items) > 0 && (len(kernels) == 0 || kernels[len(kernels)-1] != items[len(items)-1]) {
+		kernels = append(kernels, items[len(items)-1])
+	}
+	return kernels
+}
+
 // This function is the same as section.GetAll(), but if an item has spaces, it will be split into multiple items.
 // It also supports tags. For example, `package = linux-headers linux-firmware, +bare` needs to be split into `linux-headers` and `linux-firmware`.
 func getAll(section *parser.Section, key string) []string {
@@ -364,7 +397,7 @@ func getAll(section *parser.Section, key string) []string {
 	for i := 0; i < len(items); i++ {
 		included := true
 
-		parts := strings.SplitN(items[i], ",", 2)
+		parts := strings.Split(items[i], ",")
 
 		// Check for tagging, e.g., "pkg, +!bare" etc.
 		if len(parts) > 1 {
@@ -415,11 +448,9 @@ func getAll(section *parser.Section, key string) []string {
 
 func init() {
 	applyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file")
-	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag")
+	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag (equivalent to --tags=\"-default +bare\")")
 
-	providedTags := []string{}
-	applyCmd.PersistentFlags().StringSliceVar(&providedTags, "tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
-	tags = append(tags, providedTags...)
+	applyCmd.PersistentFlags().StringSliceVar(&tags, "tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
 
 	rootCmd.AddCommand(applyCmd)
 }
