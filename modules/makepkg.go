@@ -19,14 +19,14 @@ func MakepkgInstall(pkg string) error {
 
 	err = utils.ExecCommand([]string{
 		"git", "clone", "https://aur.archlinux.org/" + pkg + ".git", dir,
-	}, "", false)
+	}, "", utils.NormalUser)
 	if err != nil {
 		return err
 	}
 
 	err = utils.ExecCommand([]string{
 		"makepkg", "-si", "--needed", "--noconfirm",
-	}, dir, false)
+	}, dir, utils.NormalUser)
 	if err != nil {
 		return err
 	}

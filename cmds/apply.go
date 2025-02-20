@@ -191,87 +191,181 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
 
-	addedKernels, removedKernels := utils.GetDifferences(getAllKernels(section, "essentials/kernel"), getAllKernels(previousSection, "essentials/kernel"))
-	// Installing a kernel before removing any just to be safe
-	if len(addedKernels)-1 >= 0 {
-		if err := modules.PacmanInstall(addedKernels[len(addedKernels)-1]); err != nil {
-			return err
-		}
-	}
-	for i := 0; i < len(removedKernels); i++ {
-		if err := modules.PacmanRemove(removedKernels[i]); err != nil {
-			return err
-		}
-	}
-	for i := len(addedKernels) - 2; i >= 0; i-- {
-		if err := modules.PacmanInstall(addedKernels[i]); err != nil {
-			return err
-		}
-	}
-
-	addedBootloader, removedBootloader := utils.GetDifferences([]string{section.GetFirst("essentials/bootloader", "grub")}, []string{previousSection.GetFirst("essentials/bootloader", "")})
-	if len(removedBootloader) > 0 {
-		if err := modules.PacmanRemove(removedBootloader[0]); err != nil {
-			return err
-		}
-	}
-	if len(addedBootloader) > 0 {
-		if err := modules.PacmanInstall(addedBootloader[0]); err != nil {
-			return err
-		}
-	}
-	// TODO: Some way to disable installing efibootmgr if the bootloader doesn't use it??
-	if err := modules.PacmanInstall("efibootmgr"); err != nil {
-		return nil
-	}
-
-	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(getAll(section, "packages/pacman/package"), getAll(previousSection, "packages/pacman/package"))
-	if len(removedPacmanPackages) > 0 {
-		if err := modules.PacmanRemove(strings.Join(removedPacmanPackages, " ")); err != nil {
-			return err
-		}
-	}
-	if len(addedPacmanPackages) > 0 {
-		if err := modules.PacmanInstall(strings.Join(addedPacmanPackages, " ")); err != nil {
-			return err
-		}
-	}
+	packageCommandHooks := getAllSections(section, "packages/command_hooks/hook")
 
 	aurHelper := section.GetFirst("packages/aur/helper", "makepkg")
-	addedAurHelper, removedAurHelper := utils.GetDifferences([]string{section.GetFirst("packages/aur/helper", "makepkg")}, []string{previousSection.GetFirst("packages/aur/helper", "")})
-	if len(removedAurHelper) > 0 && removedAurHelper[0] != "makepkg" {
-		if err := modules.PacmanRemove(removedAurHelper[0]); err != nil {
-			return err
+	aurInstaller := func(name string) error { return modules.AURInstall(aurHelper, name) }
+
+	// Handle kernels
+	kernelList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
+	addedKernels, removedKernels := utils.GetDifferences(getAllKernels(section, "essentials/kernel"), getAllKernels(previousSection, "essentials/kernel"))
+	// Installing a kernel before removing any just to be safe
+	if len(addedKernels) > 0 {
+		pkgName := addedKernels[len(addedKernels)-1]
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		kernelList.Add(pkg)
 	}
-	if len(addedAurHelper) > 0 && addedAurHelper[0] != "makepkg" {
-		if err := modules.MakepkgInstall(addedAurHelper[0]); err != nil {
-			return err
+	if err := kernelList.Install(); err != nil {
+		return err
+	}
+	kernelList.Clear()
+	for _, pkgName := range removedKernels {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		kernelList.Add(pkg)
+	}
+	if err := kernelList.Remove(); err != nil {
+		return err
+	}
+	kernelList.Clear()
+	for i := len(addedKernels) - 2; i >= 0; i-- {
+		pkgName := addedKernels[i]
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		kernelList.Add(pkg)
+	}
+	if err := kernelList.Install(); err != nil {
+		return err
 	}
 
+	// Handle bootloader
+	bootloaderList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
+	addedBootloader, removedBootloader := utils.GetDifferences([]string{section.GetFirst("essentials/bootloader", "grub")}, []string{previousSection.GetFirst("essentials/bootloader", "")})
+	for _, pkgName := range removedBootloader {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		bootloaderList.Add(pkg)
+	}
+	if err := bootloaderList.Remove(); err != nil {
+		return err
+	}
+	bootloaderList.Clear()
+	for _, pkgName := range addedBootloader {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		bootloaderList.Add(pkg)
+	}
+	// TODO: Some way to disable installing efibootmgr if the bootloader doesn't use it??
+	if len(addedBootloader) > 0 {
+		pkgName := "efibootmgr"
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		bootloaderList.Add(pkg)
+	}
+	if err := bootloaderList.Install(); err != nil {
+		return err
+	}
+
+	// Handle pacman packages
+	pacmanList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
+	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(getAll(section, "packages/pacman/package"), getAll(previousSection, "packages/pacman/package"))
+	for _, pkgName := range removedPacmanPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		pacmanList.Add(pkg)
+	}
+	if err := pacmanList.Remove(); err != nil {
+		return err
+	}
+	pacmanList.Clear()
+	for _, pkgName := range addedPacmanPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		pacmanList.Add(pkg)
+	}
+	if err := pacmanList.Install(); err != nil {
+		return err
+	}
+
+	// Handle AUR packages
+	aurList := modules.NewPackageList(aurInstaller, modules.PacmanRemove)
 	addedAurPackages, removedAurPackages := utils.GetDifferences(getAll(section, "packages/aur/package"), getAll(previousSection, "packages/aur/package"))
-	if len(removedAurPackages) > 0 {
-		if err := modules.PacmanRemove(strings.Join(removedAurPackages, " ")); err != nil {
-			return err
+	for _, pkgName := range removedAurPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		aurList.Add(pkg)
 	}
-	if len(addedAurPackages) > 0 {
-		if err := modules.AURInstall(aurHelper, strings.Join(addedAurPackages, " ")); err != nil {
-			return err
+	if err := aurList.Remove(); err != nil {
+		return err
+	}
+	aurList.Clear()
+	for _, pkgName := range addedAurPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		aurList.Add(pkg)
+	}
+	if err := aurList.Install(); err != nil {
+		return err
 	}
 
+	// Handle network handler
+	networkHandlerList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedNetworkHandler, removedNetworkHandler := utils.GetDifferences([]string{section.GetFirst("essentials/network_handler", "networkmanager")}, []string{previousSection.GetFirst("essentials/network_handler", "")})
-	if len(addedNetworkHandler) > 0 {
-		if err := modules.PacmanInstall(addedNetworkHandler[len(addedNetworkHandler)-1]); err != nil {
-			return err
+	for _, pkgName := range removedNetworkHandler {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		networkHandlerList.Add(pkg)
 	}
-	if len(removedNetworkHandler) > 0 {
-		if err := modules.PacmanRemove(removedNetworkHandler[0]); err != nil {
-			return err
+	if err := networkHandlerList.Remove(); err != nil {
+		return err
+	}
+	networkHandlerList.Clear()
+	for _, pkgName := range addedNetworkHandler {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
 		}
+		networkHandlerList.Add(pkg)
+	}
+	if err := networkHandlerList.Install(); err != nil {
+		return err
 	}
 
 	// TODO

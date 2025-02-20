@@ -13,12 +13,12 @@ import (
 	"github.com/fatih/color"
 )
 
-func ExecCommand(command []string, dir string, useRoot bool) error {
+func ExecCommand(command []string, dir string, username string) error {
 	if len(command) == 0 {
 		return fmt.Errorf("no command provided")
 	}
 	if command[0] == "" {
-		return ExecCommand(command[1:], dir, useRoot)
+		return ExecCommand(command[1:], dir, username)
 	}
 
 	color.Set(color.FgCyan)
@@ -36,10 +36,10 @@ func ExecCommand(command []string, dir string, useRoot bool) error {
 		cmd.Dir = absDir
 	}
 
-	if !useRoot {
-		userInfo, err := user.Lookup(NormalUser)
+	if username != "" {
+		userInfo, err := user.Lookup(username)
 		if err != nil {
-			return fmt.Errorf("failed to get user info for %s: %w", NormalUser, err)
+			return fmt.Errorf("failed to get user info for %s: %w", username, err)
 		}
 
 		uid, err := strconv.Atoi(userInfo.Uid)

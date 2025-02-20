@@ -15,10 +15,16 @@ func AURInstall(helper string, pkg string) error {
 }
 
 func PacmanWrapperInstall(wrapper string, pkg string) error {
+	user := ""
+	if slices.Contains(rootPacmanWrappers, wrapper) {
+		user = ""
+	} else {
+		user = utils.NormalUser
+	}
 	splitPkg := strings.Split(pkg, " ")
 	err := utils.ExecCommand(append([]string{
 		wrapper, "-S", "--needed", "--noconfirm",
-	}, splitPkg...), "", slices.Contains(rootPacmanWrappers, wrapper))
+	}, splitPkg...), "", user)
 	if err != nil {
 		return err
 	}

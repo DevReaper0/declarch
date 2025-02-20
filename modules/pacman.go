@@ -10,7 +10,7 @@ func PacmanInstall(pkg string) error {
 	splitPkg := strings.Split(pkg, " ")
 	err := utils.ExecCommand(append([]string{
 		"pacman", "-S", "--needed", "--noconfirm",
-	}, splitPkg...), "", true)
+	}, splitPkg...), "", "")
 	if err != nil {
 		return err
 	}
@@ -21,7 +21,7 @@ func PacmanRemove(pkg string) error {
 	splitPkg := strings.Split(pkg, " ")
 	err := utils.ExecCommand(append([]string{
 		"pacman", "-R", "--noconfirm",
-	}, splitPkg...), "", true)
+	}, splitPkg...), "", "")
 	if err != nil {
 		return err
 	}
