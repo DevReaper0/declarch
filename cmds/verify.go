@@ -120,9 +120,7 @@ func VerifyTag(tag string) string {
 	}
 
 	tagName := strings.TrimPrefix(tag, "+")
-	if strings.HasPrefix(tagName, "!") {
-		tagName = strings.TrimPrefix(tagName, "!")
-	}
+	tagName = strings.TrimPrefix(tagName, "!")
 
 	if len(tagName) == 0 {
 		return "Tag name cannot be empty"

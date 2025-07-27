@@ -27,3 +27,13 @@ func PacmanRemove(pkg string) error {
 	}
 	return nil
 }
+
+func PacmanSystemUpgrade() error {
+	err := utils.ExecCommand([]string{
+		"pacman", "-Syu", "--noconfirm",
+	}, "", "")
+	if err != nil {
+		return err
+	}
+	return nil
+}

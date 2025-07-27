@@ -31,4 +31,20 @@ func PacmanWrapperInstall(wrapper string, pkg string) error {
 	return nil
 }
 
+func PacmanWrapperSystemUpgrade(wrapper string) error {
+	user := ""
+	if slices.Contains(rootPacmanWrappers, wrapper) {
+		user = ""
+	} else {
+		user = utils.NormalUser
+	}
+	err := utils.ExecCommand([]string{
+		wrapper, "-Syu", "--noconfirm",
+	}, "", user)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 var rootPacmanWrappers = []string{}

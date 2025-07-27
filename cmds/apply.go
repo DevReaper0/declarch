@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -116,6 +117,24 @@ var applyCmd = &cobra.Command{
 			}
 		}
 
+		if up, _ := cmd.PersistentFlags().GetBool("upgrade"); up {
+			if err := Upgrade(section); err != nil {
+				color.Set(color.FgRed)
+				fmt.Print("Error upgrading system: ")
+				color.Set(color.Bold)
+				fmt.Print(configPath)
+				color.Set(color.ResetBold)
+				fmt.Println(":")
+				color.Unset()
+				fmt.Fprintln(os.Stderr, err)
+				return
+			}
+			color.Set(color.FgGreen, color.Bold)
+			fmt.Println("System upgraded successfully.")
+			color.Unset()
+			return
+		}
+
 		if err := Apply(section, previousSection); err != nil {
 			color.Set(color.FgRed)
 			fmt.Print("Error applying configuration: ")
@@ -186,7 +205,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 
-	// Temporary fix the non-root commands since user management is not implemented yet.
+	// Temporary fix for the non-root commands since user management is not implemented yet.
 	// For now, a user must be defined the configuration and the user must already exist on the system.
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
@@ -373,6 +392,135 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	return nil
 }
 
+func Upgrade(section *parser.Section) error {
+	modules.PrivilegeEscalationCommand = section.GetFirst("essentials/privilige_escalation", "sudo")
+	if modules.PrivilegeEscalationCommand == "su" {
+		modules.PrivilegeEscalationCommand = "su -c"
+	}
+
+	// Temporary fix for the non-root commands since user management is not implemented yet.
+	// For now, a user must be defined the configuration and the user must already exist on the system.
+	// Otherwise, the "nobody" user will be used.
+	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
+
+	// Check which sections are actually configured
+	pacmanConfigured := false
+	aurConfigured := false
+
+	// Check if pacman section exists and has at least one package
+	if packageSections, ok := section.Sections["packages"]; ok {
+		for _, pkgSection := range packageSections {
+			if _, hasPacman := pkgSection.Sections["pacman"]; hasPacman {
+				pacmanConfigured = true
+				break
+			}
+		}
+	}
+
+	// Check if AUR section exists and has a helper configured
+	aurHelper := section.GetFirst("packages/aur/helper", "")
+	aurPackages := getAll(section, "packages/aur/package")
+	aurConfigured = aurHelper != "" && len(aurPackages) > 0
+
+	availableUpgrades := []string{}
+	if pacmanConfigured {
+		availableUpgrades = append(availableUpgrades, "pacman:system packages via Pacman")
+	}
+	if aurConfigured {
+		availableUpgrades = append(availableUpgrades, "aur:AUR packages via "+aurHelper)
+	}
+
+	// If no package managers are configured, inform the user
+	if len(availableUpgrades) == 0 {
+		color.Set(color.FgYellow)
+		fmt.Println("No package managers configured for upgrade.")
+		color.Unset()
+		return nil
+	}
+
+	toUpgrade := confirmUpgradeAll(availableUpgrades)
+
+	if slices.Contains(toUpgrade, "pacman") {
+		color.Set(color.FgCyan)
+		fmt.Println("Upgrading system packages via Pacman...")
+		color.Unset()
+
+		if err := modules.PacmanSystemUpgrade(); err != nil {
+			return err
+		}
+	}
+
+	if slices.Contains(toUpgrade, "aur") {
+		color.Set(color.FgCyan)
+		fmt.Println("Upgrading AUR packages via " + aurHelper + "...")
+		color.Unset()
+
+		if err := modules.PacmanWrapperSystemUpgrade(aurHelper); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// confirmUpgrade asks the user whether they want to upgrade a specific package manager
+// Returns true if the user confirms or doesn't provide input (default yes)
+func confirmUpgrade(packageType string) bool {
+	color.Set(color.FgCyan)
+	fmt.Printf("Do you want to upgrade %s? [Y/n] ", packageType)
+	color.Unset()
+
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		return false
+	}
+
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "" || response == "y" || response == "yes"
+}
+
+// confirmUpgradeAll asks the user whether they want to upgrade all available tools
+func confirmUpgradeAll(availableUpgrades []string) []string {
+	toUpgrade := []string{}
+
+	if len(availableUpgrades) > 1 {
+		color.Set(color.FgCyan)
+		fmt.Print("Do you want to upgrade all available tools (")
+		for i, upgrade := range availableUpgrades {
+			if i > 0 {
+				fmt.Print(", ")
+			}
+			fmt.Print(strings.SplitN(upgrade, ":", 2)[1])
+		}
+		fmt.Print(")? [Y/n] ")
+		color.Unset()
+
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+		if response == "" || response == "y" || response == "yes" {
+			for _, upgrade := range availableUpgrades {
+				toUpgrade = append(toUpgrade, strings.SplitN(upgrade, ":", 2)[0])
+			}
+			return toUpgrade
+		}
+	}
+
+	for _, upgrade := range availableUpgrades {
+		upgradeName, upgradeDesc, _ := strings.Cut(upgrade, ":")
+		if confirmUpgrade(upgradeDesc) {
+			toUpgrade = append(toUpgrade, upgradeName)
+		}
+	}
+	return toUpgrade
+}
+
 // transformBooleanOption converts a boolean string ("true"/"false") to its pacman boolean representation.
 func transformBooleanOption(value string) string {
 	if val, err := strconv.ParseBool(value); err == nil && val {
@@ -545,6 +693,8 @@ func init() {
 	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag (equivalent to --tags=\"-default +bare\")")
 
 	applyCmd.PersistentFlags().StringSliceVar(&tags, "tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
+
+	applyCmd.PersistentFlags().BoolP("upgrade", "u", false, "Perform a system upgrade")
 
 	rootCmd.AddCommand(applyCmd)
 }
