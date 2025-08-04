@@ -210,36 +210,36 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
 
-	packageCommandHooks := getAllSections(section, "packages/command_hooks/hook")
-
-	if err := applyKernels(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyKernels(section, previousSection); err != nil {
 		return fmt.Errorf("error applying kernel configuration: %w", err)
 	}
 
-	if err := applyBootloader(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyBootloader(section, previousSection); err != nil {
 		return fmt.Errorf("error applying bootloader configuration: %w", err)
 	}
 
-	if err := applyPacman(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyPacman(section, previousSection); err != nil {
 		return fmt.Errorf("error applying pacman configuration: %w", err)
 	}
 
-	if err := applyAUR(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyAUR(section, previousSection); err != nil {
 		return fmt.Errorf("error applying AUR configuration: %w", err)
 	}
 
-	if err := applyFlatpak(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyFlatpak(section, previousSection); err != nil {
 		return fmt.Errorf("error applying Flatpak configuration: %w", err)
 	}
 
-	if err := applyNetworkHandler(section, previousSection, packageCommandHooks); err != nil {
+	if err := applyNetworkHandler(section, previousSection); err != nil {
 		return fmt.Errorf("error applying network handler configuration: %w", err)
 	}
 
 	return nil
 }
 
-func applyKernels(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyKernels(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+
 	kernelList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedKernels, removedKernels := utils.GetDifferences(tagSet.GetAll(section, "essentials/kernel"), tagSet.GetAll(previousSection, "essentials/kernel"))
 
@@ -299,7 +299,9 @@ func applyKernels(section *parser.Section, previousSection *parser.Section, pack
 	return nil
 }
 
-func applyBootloader(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyBootloader(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+
 	bootloaderList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedBootloader, removedBootloader := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/bootloader", "grub efibootmgr")), strings.Fields(previousSection.GetFirst("essentials/bootloader", "")))
 
@@ -333,7 +335,9 @@ func applyBootloader(section *parser.Section, previousSection *parser.Section, p
 	return nil
 }
 
-func applyNetworkHandler(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyNetworkHandler(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+
 	networkHandlerList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedNetworkHandler, removedNetworkHandler := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/network_handler", "networkmanager")), strings.Fields(previousSection.GetFirst("essentials/network_handler", "")))
 
@@ -367,7 +371,9 @@ func applyNetworkHandler(section *parser.Section, previousSection *parser.Sectio
 	return nil
 }
 
-func applyPacman(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyPacman(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+
 	pacmanList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(tagSet.GetAll(section, "packages/pacman/package"), tagSet.GetAll(previousSection, "packages/pacman/package"))
 
@@ -401,7 +407,9 @@ func applyPacman(section *parser.Section, previousSection *parser.Section, packa
 	return nil
 }
 
-func applyAUR(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyAUR(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/aur/hook")
+
 	aurHelper := section.GetFirst("packages/aur/helper", "makepkg")
 	aurInstall := func(pkgs interface{}) error { return modules.AURInstall(aurHelper, pkgs) }
 	aurList := modules.NewPackageList(aurInstall, modules.PacmanRemove)
@@ -437,7 +445,9 @@ func applyAUR(section *parser.Section, previousSection *parser.Section, packageC
 	return nil
 }
 
-func applyFlatpak(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+func applyFlatpak(section *parser.Section, previousSection *parser.Section) error {
+	packageCommandHooks := getAllSections(section, "packages/flatpak/hook")
+
 	autoInstallString := section.GetFirst("packages/flatpak/auto_install", "true")
 	autoInstall, err := strconv.ParseBool(autoInstallString)
 	if err != nil {
