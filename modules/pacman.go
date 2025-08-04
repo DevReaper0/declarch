@@ -1,39 +1,34 @@
 package modules
 
 import (
-	"strings"
+	"fmt"
 
 	"github.com/DevReaper0/declarch/utils"
 )
 
-func PacmanInstall(pkg string) error {
-	splitPkg := strings.Split(pkg, " ")
-	err := utils.ExecCommand(append([]string{
-		"pacman", "-S", "--needed", "--noconfirm",
-	}, splitPkg...), "", "")
-	if err != nil {
-		return err
+func PacmanInstall(pkgs interface{}) error {
+	pkgNames, ok := pkgs.([]string)
+	if !ok {
+		return fmt.Errorf("expected []string for package names, got %T", pkgs)
 	}
-	return nil
+	return utils.ExecCommand(append([]string{
+		"pacman", "-S", "--needed", "--noconfirm",
+	}, pkgNames...), "", "")
 }
 
-func PacmanRemove(pkg string) error {
-	splitPkg := strings.Split(pkg, " ")
-	err := utils.ExecCommand(append([]string{
-		"pacman", "-R", "--noconfirm",
-	}, splitPkg...), "", "")
-	if err != nil {
-		return err
+func PacmanRemove(pkgs interface{}) error {
+	pkgNames, ok := pkgs.([]string)
+	if !ok {
+		return fmt.Errorf("expected []string for package names, got %T", pkgs)
 	}
-	return nil
+
+	return utils.ExecCommand(append([]string{
+		"pacman", "-R", "--noconfirm",
+	}, pkgNames...), "", "")
 }
 
 func PacmanSystemUpgrade() error {
-	err := utils.ExecCommand([]string{
+	return utils.ExecCommand([]string{
 		"pacman", "-Syu", "--noconfirm",
 	}, "", "")
-	if err != nil {
-		return err
-	}
-	return nil
 }

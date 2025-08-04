@@ -13,13 +13,13 @@ type PackageHook struct {
 }
 
 type Package struct {
-	Name  string
+	Value interface{}
 	Hooks []PackageHook
 }
 
-func NewPackage(name string) *Package {
+func NewPackage(value interface{}) *Package {
 	return &Package{
-		Name:  name,
+		Value: value,
 		Hooks: make([]PackageHook, 0),
 	}
 }
@@ -34,11 +34,11 @@ func (p *Package) AddHook(timing, user, run string) {
 
 type PackageList struct {
 	Packages    []*Package
-	InstallFunc func(string) error
-	RemoveFunc  func(string) error
+	InstallFunc func(interface{}) error
+	RemoveFunc  func(interface{}) error
 }
 
-func NewPackageList(installFunc, removeFunc func(string) error) *PackageList {
+func NewPackageList(installFunc, removeFunc func(interface{}) error) *PackageList {
 	return &PackageList{
 		Packages:    make([]*Package, 0),
 		InstallFunc: installFunc,
@@ -68,11 +68,12 @@ func (pl *PackageList) Install() error {
 
 	// Install all packages in one command
 	if len(pl.Packages) > 0 {
-		names := make([]string, 0, len(pl.Packages))
-		for _, pkg := range pl.Packages {
-			names = append(names, pkg.Name)
+		values := make([]interface{}, len(pl.Packages))
+		for i, pkg := range pl.Packages {
+			values[i] = pkg.Value
 		}
-		if err := pl.InstallFunc(strings.Join(names, " ")); err != nil {
+
+		if err := pl.InstallFunc(values); err != nil {
 			return err
 		}
 	}
@@ -93,11 +94,12 @@ func (pl *PackageList) Install() error {
 
 func (pl *PackageList) Remove() error {
 	if len(pl.Packages) > 0 {
-		names := make([]string, 0, len(pl.Packages))
-		for _, pkg := range pl.Packages {
-			names = append(names, pkg.Name)
+		values := make([]interface{}, len(pl.Packages))
+		for i, pkg := range pl.Packages {
+			values[i] = pkg.Value
 		}
-		if err := pl.RemoveFunc(strings.Join(names, " ")); err != nil {
+
+		if err := pl.RemoveFunc(values); err != nil {
 			return err
 		}
 	}

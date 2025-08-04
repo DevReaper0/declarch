@@ -1,34 +1,40 @@
 package modules
 
 import (
+	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/DevReaper0/declarch/utils"
 )
 
-func AURInstall(helper string, pkg string) error {
-	if helper == "makepkg" {
-		return MakepkgInstall(pkg)
+func AURInstall(helper string, pkgs interface{}) error {
+	pkgNames, ok := pkgs.([]string)
+	if !ok {
+		return fmt.Errorf("expected []string for package names, got %T", pkgs)
 	}
-	return PacmanWrapperInstall(helper, pkg)
+
+	if helper == "makepkg" {
+		for _, pkgName := range pkgNames {
+			if err := MakepkgInstall(pkgName); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return PacmanWrapperInstall(helper, pkgNames)
 }
 
-func PacmanWrapperInstall(wrapper string, pkg string) error {
+func PacmanWrapperInstall(wrapper string, pkgNames []string) error {
 	user := ""
 	if slices.Contains(rootPacmanWrappers, wrapper) {
 		user = ""
 	} else {
 		user = utils.NormalUser
 	}
-	splitPkg := strings.Split(pkg, " ")
-	err := utils.ExecCommand(append([]string{
+
+	return utils.ExecCommand(append([]string{
 		wrapper, "-S", "--needed", "--noconfirm",
-	}, splitPkg...), "", user)
-	if err != nil {
-		return err
-	}
-	return nil
+	}, pkgNames...), "", user)
 }
 
 func PacmanWrapperSystemUpgrade(wrapper string) error {
@@ -38,13 +44,10 @@ func PacmanWrapperSystemUpgrade(wrapper string) error {
 	} else {
 		user = utils.NormalUser
 	}
-	err := utils.ExecCommand([]string{
+
+	return utils.ExecCommand([]string{
 		wrapper, "-Syu", "--noconfirm",
 	}, "", user)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 var rootPacmanWrappers = []string{}

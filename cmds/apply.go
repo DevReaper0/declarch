@@ -21,7 +21,7 @@ import (
 )
 
 // The default tag includes everything without the exclamation mark.
-var tags []string
+var tagSet *modules.TagSet
 
 var applyCmd = &cobra.Command{
 	Use:   "apply",
@@ -30,11 +30,15 @@ var applyCmd = &cobra.Command{
 		configPath, _ := cmd.Flags().GetString("config")
 		configPath, _ = filepath.Abs(configPath)
 
-		if bare, _ := cmd.PersistentFlags().GetBool("bare"); bare {
-			tags = append(tags, "-default", "+bare")
+		tagSet = modules.NewTagSet("+default")
+
+		if tags, _ := cmd.PersistentFlags().GetStringSlice("tags"); len(tags) > 0 {
+			tagSet.AddTags(tags)
 		}
 
-		tags = append([]string{"+default"}, tags...)
+		if bare, _ := cmd.PersistentFlags().GetBool("bare"); bare {
+			tagSet.AddTags([]string{"-default", "+bare"})
+		}
 
 		if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
 			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -74,9 +78,6 @@ var applyCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
-
-		// parserTester(section)
-		// return
 
 		if Verify(section) == "" {
 			color.Set(color.FgGreen, color.Bold)
@@ -196,12 +197,11 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		modules.PrivilegeEscalationCommand = "su -c"
 	}
 
-	// Pacman configuration
 	if err := configurePacman(section); err != nil {
 		return fmt.Errorf("error configuring pacman: %w", err)
 	}
 
-	if err := modules.PacmanInstall("base base-devel git"); err != nil {
+	if err := modules.PacmanInstall([]string{"base", "base-devel", "git"}); err != nil {
 		return err
 	}
 
@@ -212,27 +212,63 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 
 	packageCommandHooks := getAllSections(section, "packages/command_hooks/hook")
 
-	aurHelper := section.GetFirst("packages/aur/helper", "makepkg")
-	aurInstaller := func(name string) error { return modules.AURInstall(aurHelper, name) }
+	if err := applyKernels(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying kernel configuration: %w", err)
+	}
 
-	// Handle kernels
+	if err := applyBootloader(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying bootloader configuration: %w", err)
+	}
+
+	if err := applyPacman(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying pacman configuration: %w", err)
+	}
+
+	if err := applyAUR(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying AUR configuration: %w", err)
+	}
+
+	if err := applyFlatpak(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying Flatpak configuration: %w", err)
+	}
+
+	if err := applyNetworkHandler(section, previousSection, packageCommandHooks); err != nil {
+		return fmt.Errorf("error applying network handler configuration: %w", err)
+	}
+
+	return nil
+}
+
+func applyKernels(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
 	kernelList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
-	addedKernels, removedKernels := utils.GetDifferences(getAllKernels(section, "essentials/kernel"), getAllKernels(previousSection, "essentials/kernel"))
+	addedKernels, removedKernels := utils.GetDifferences(tagSet.GetAll(section, "essentials/kernel"), tagSet.GetAll(previousSection, "essentials/kernel"))
+
 	// Installing a kernel before removing any just to be safe
 	if len(addedKernels) > 0 {
-		pkgName := addedKernels[len(addedKernels)-1]
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		kernelPackageNames := section.GetAll("essentials/kernel")
+		pkgNamesString := kernelPackageNames[len(kernelPackageNames)-1]
+		pkgNamesString = strings.SplitN(pkgNamesString, ",", 2)[0]
+		pkgNames := strings.Fields(pkgNamesString)
+		for _, pkgName := range pkgNames {
+			pkg := modules.NewPackage(pkgName)
+			for _, hook := range packageCommandHooks {
+				if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+					pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+				}
 			}
+			kernelList.Add(pkg)
 		}
-		kernelList.Add(pkg)
+
+		addedKernels = slices.DeleteFunc(addedKernels, func(s string) bool {
+			return slices.Contains(pkgNames, s)
+		})
+
+		if err := kernelList.Install(); err != nil {
+			return err
+		}
+		kernelList.Clear()
 	}
-	if err := kernelList.Install(); err != nil {
-		return err
-	}
-	kernelList.Clear()
+
 	for _, pkgName := range removedKernels {
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
@@ -246,8 +282,8 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 	kernelList.Clear()
-	for i := len(addedKernels) - 2; i >= 0; i-- {
-		pkgName := addedKernels[i]
+
+	for _, pkgName := range addedKernels {
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
 			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
@@ -260,9 +296,13 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 
-	// Handle bootloader
+	return nil
+}
+
+func applyBootloader(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
 	bootloaderList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
-	addedBootloader, removedBootloader := utils.GetDifferences([]string{section.GetFirst("essentials/bootloader", "grub")}, []string{previousSection.GetFirst("essentials/bootloader", "")})
+	addedBootloader, removedBootloader := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/bootloader", "grub efibootmgr")), strings.Fields(previousSection.GetFirst("essentials/bootloader", "")))
+
 	for _, pkgName := range removedBootloader {
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
@@ -276,18 +316,8 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 	bootloaderList.Clear()
+
 	for _, pkgName := range addedBootloader {
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
-			}
-		}
-		bootloaderList.Add(pkg)
-	}
-	// TODO: Some way to disable installing efibootmgr if the bootloader doesn't use it??
-	if len(addedBootloader) > 0 {
-		pkgName := "efibootmgr"
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
 			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
@@ -300,67 +330,13 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 
-	// Handle pacman packages
-	pacmanList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
-	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(getAll(section, "packages/pacman/package"), getAll(previousSection, "packages/pacman/package"))
-	for _, pkgName := range removedPacmanPackages {
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
-			}
-		}
-		pacmanList.Add(pkg)
-	}
-	if err := pacmanList.Remove(); err != nil {
-		return err
-	}
-	pacmanList.Clear()
-	for _, pkgName := range addedPacmanPackages {
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
-			}
-		}
-		pacmanList.Add(pkg)
-	}
-	if err := pacmanList.Install(); err != nil {
-		return err
-	}
+	return nil
+}
 
-	// Handle AUR packages
-	aurList := modules.NewPackageList(aurInstaller, modules.PacmanRemove)
-	addedAurPackages, removedAurPackages := utils.GetDifferences(getAll(section, "packages/aur/package"), getAll(previousSection, "packages/aur/package"))
-	for _, pkgName := range removedAurPackages {
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
-			}
-		}
-		aurList.Add(pkg)
-	}
-	if err := aurList.Remove(); err != nil {
-		return err
-	}
-	aurList.Clear()
-	for _, pkgName := range addedAurPackages {
-		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
-			}
-		}
-		aurList.Add(pkg)
-	}
-	if err := aurList.Install(); err != nil {
-		return err
-	}
-
-	// Handle network handler
+func applyNetworkHandler(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
 	networkHandlerList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
-	addedNetworkHandler, removedNetworkHandler := utils.GetDifferences([]string{section.GetFirst("essentials/network_handler", "networkmanager")}, []string{previousSection.GetFirst("essentials/network_handler", "")})
+	addedNetworkHandler, removedNetworkHandler := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/network_handler", "networkmanager")), strings.Fields(previousSection.GetFirst("essentials/network_handler", "")))
+
 	for _, pkgName := range removedNetworkHandler {
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
@@ -374,6 +350,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 	networkHandlerList.Clear()
+
 	for _, pkgName := range addedNetworkHandler {
 		pkg := modules.NewPackage(pkgName)
 		for _, hook := range packageCommandHooks {
@@ -387,7 +364,202 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 
-	// TODO
+	return nil
+}
+
+func applyPacman(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+	pacmanList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
+	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(tagSet.GetAll(section, "packages/pacman/package"), tagSet.GetAll(previousSection, "packages/pacman/package"))
+
+	for _, pkgName := range removedPacmanPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		pacmanList.Add(pkg)
+	}
+	if err := pacmanList.Remove(); err != nil {
+		return err
+	}
+	pacmanList.Clear()
+
+	for _, pkgName := range addedPacmanPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		pacmanList.Add(pkg)
+	}
+	if err := pacmanList.Install(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func applyAUR(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+	aurHelper := section.GetFirst("packages/aur/helper", "makepkg")
+	aurInstall := func(pkgs interface{}) error { return modules.AURInstall(aurHelper, pkgs) }
+	aurList := modules.NewPackageList(aurInstall, modules.PacmanRemove)
+	addedAurPackages, removedAurPackages := utils.GetDifferences(tagSet.GetAll(section, "packages/aur/package"), tagSet.GetAll(previousSection, "packages/aur/package"))
+
+	for _, pkgName := range removedAurPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		aurList.Add(pkg)
+	}
+	if err := aurList.Remove(); err != nil {
+		return err
+	}
+	aurList.Clear()
+
+	for _, pkgName := range addedAurPackages {
+		pkg := modules.NewPackage(pkgName)
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		aurList.Add(pkg)
+	}
+	if err := aurList.Install(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func applyFlatpak(section *parser.Section, previousSection *parser.Section, packageCommandHooks []*parser.Section) error {
+	autoInstallString := section.GetFirst("packages/flatpak/auto_install", "true")
+	autoInstall, err := strconv.ParseBool(autoInstallString)
+	if err != nil {
+		return fmt.Errorf("invalid value for 'auto_install' field in Flatpak section: %s", autoInstallString)
+	}
+	if autoInstall {
+		flatpakPackages := getFlatpakPackages(section)
+		if len(flatpakPackages) > 0 {
+			if err := modules.PacmanInstall("flatpak"); err != nil {
+				return err
+			}
+		}
+	}
+
+	currentRemotes := getAllSections(section, "packages/flatpak/remote")
+	previousRemotes := getAllSections(previousSection, "packages/flatpak/remote")
+
+	addedRemotes, removedRemotes := utils.GetDifferences(getFlatpakRemoteIdentifiers(currentRemotes), getFlatpakRemoteIdentifiers(previousRemotes))
+
+	previousRemoteMap := make(map[string]modules.FlatpakRemote)
+	for _, remote := range previousRemotes {
+		name := remote.GetFirst("name", "")
+		if name == "" {
+			continue
+		}
+
+		remoteObj, err := modules.FlatpakRemoteFrom(remote)
+		if err != nil {
+			return fmt.Errorf("error processing previous remote %s: %w", name, err)
+		}
+
+		identifier := createFlatpakIdentifier(remoteObj.Name, remoteObj.Installation, remoteObj.UserInstallation)
+		previousRemoteMap[identifier] = remoteObj
+	}
+
+	// Remove remotes that are no longer configured
+	for _, identifier := range removedRemotes {
+		prevRemote := previousRemoteMap[identifier]
+		if err := modules.FlatpakRemoveRemote(prevRemote); err != nil {
+			return err
+		}
+	}
+
+	for _, remote := range currentRemotes {
+		remoteObj, err := modules.FlatpakRemoteFrom(remote)
+		if err != nil {
+			return err
+		}
+
+		identifier := createFlatpakIdentifier(remoteObj.Name, remoteObj.Installation, remoteObj.UserInstallation)
+
+		if slices.Contains(addedRemotes, identifier) {
+			if err := modules.FlatpakAddRemote(remoteObj); err != nil {
+				return err
+			}
+		} else if remoteObj != previousRemoteMap[identifier] {
+			if err := modules.FlatpakModifyRemote(remoteObj); err != nil {
+				return fmt.Errorf("error updating remote %s: %w", remoteObj.Name, err)
+			}
+		}
+	}
+
+	flatpakList := modules.NewPackageList(modules.FlatpakInstall, modules.FlatpakRemove)
+	currentFlatpakPackages := getFlatpakPackages(section)
+	previousFlatpakPackages := getFlatpakPackages(previousSection)
+	addedFlatpakPackages, removedFlatpakPackages := utils.GetDifferences(
+		getFlatpakPackageIdentifiers(currentFlatpakPackages),
+		getFlatpakPackageIdentifiers(previousFlatpakPackages),
+	)
+
+	addedPackageObjs := make(map[string]modules.FlatpakPackage)
+	for _, pkgIdentifier := range addedFlatpakPackages {
+		for _, pkg := range currentFlatpakPackages {
+			identifier := createFlatpakIdentifier(pkg.Name, pkg.Installation, pkg.UserInstallation)
+			if identifier == pkgIdentifier {
+				addedPackageObjs[pkgIdentifier] = pkg
+				break
+			}
+		}
+	}
+
+	removedPackageObjs := make(map[string]modules.FlatpakPackage)
+	for _, pkgIdentifier := range removedFlatpakPackages {
+		for _, pkg := range previousFlatpakPackages {
+			identifier := createFlatpakIdentifier(pkg.Name, pkg.Installation, pkg.UserInstallation)
+			if identifier == pkgIdentifier {
+				removedPackageObjs[pkgIdentifier] = pkg
+				break
+			}
+		}
+	}
+
+	for _, pkgIdentifier := range removedFlatpakPackages {
+		flatpakPackage := removedPackageObjs[pkgIdentifier]
+		pkg := modules.NewPackage(flatpakPackage)
+
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgIdentifier && hook.GetFirst("for", "install") == "remove" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		flatpakList.Add(pkg)
+	}
+	if err := flatpakList.Remove(); err != nil {
+		return err
+	}
+	flatpakList.Clear()
+
+	for _, pkgIdentifier := range addedFlatpakPackages {
+		flatpakPackage := addedPackageObjs[pkgIdentifier]
+		pkg := modules.NewPackage(flatpakPackage)
+
+		for _, hook := range packageCommandHooks {
+			if hook.GetFirst("package", "") == pkgIdentifier && hook.GetFirst("for", "install") == "install" {
+				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			}
+		}
+		flatpakList.Add(pkg)
+	}
+	if err := flatpakList.Install(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -403,24 +575,15 @@ func Upgrade(section *parser.Section) error {
 	// Otherwise, the "nobody" user will be used.
 	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
 
-	// Check which sections are actually configured
-	pacmanConfigured := false
-	aurConfigured := false
+	pacmanPackageCount := len(section.GetAll("packages/pacman/package"))
+	pacmanConfigured := pacmanPackageCount > 0
 
-	// Check if pacman section exists and has at least one package
-	if packageSections, ok := section.Sections["packages"]; ok {
-		for _, pkgSection := range packageSections {
-			if _, hasPacman := pkgSection.Sections["pacman"]; hasPacman {
-				pacmanConfigured = true
-				break
-			}
-		}
-	}
-
-	// Check if AUR section exists and has a helper configured
 	aurHelper := section.GetFirst("packages/aur/helper", "")
-	aurPackages := getAll(section, "packages/aur/package")
-	aurConfigured = aurHelper != "" && len(aurPackages) > 0
+	aurPackageCount := len(section.GetAll("packages/aur/package"))
+	aurConfigured := aurHelper != "" && aurPackageCount > 0
+
+	flatpakPackageCount := len(section.GetAll("packages/flatpak/package")) + len(section.GetAll("packages/flatpak/package/name"))
+	flatpakConfigured := flatpakPackageCount > 0
 
 	availableUpgrades := []string{}
 	if pacmanConfigured {
@@ -429,8 +592,10 @@ func Upgrade(section *parser.Section) error {
 	if aurConfigured {
 		availableUpgrades = append(availableUpgrades, "aur:AUR packages via "+aurHelper)
 	}
+	if flatpakConfigured {
+		availableUpgrades = append(availableUpgrades, "flatpak:Flatpak packages")
+	}
 
-	// If no package managers are configured, inform the user
 	if len(availableUpgrades) == 0 {
 		color.Set(color.FgYellow)
 		fmt.Println("No package managers configured for upgrade.")
@@ -460,6 +625,16 @@ func Upgrade(section *parser.Section) error {
 		}
 	}
 
+	if slices.Contains(toUpgrade, "flatpak") {
+		color.Set(color.FgCyan)
+		fmt.Println("Upgrading Flatpak packages...")
+		color.Unset()
+
+		if err := modules.FlatpakSystemUpgrade(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -473,7 +648,9 @@ func confirmUpgrade(packageType string) bool {
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		color.Set(color.FgRed)
+		fmt.Println("Error reading input:", err)
+		color.Unset()
 		return false
 	}
 
@@ -500,7 +677,9 @@ func confirmUpgradeAll(availableUpgrades []string) []string {
 		reader := bufio.NewReader(os.Stdin)
 		response, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			color.Set(color.FgRed)
+			fmt.Println("Error reading input:", err)
+			color.Unset()
 		}
 
 		response = strings.ToLower(strings.TrimSpace(response))
@@ -534,10 +713,12 @@ func configurePacman(section *parser.Section) error {
 	pacmanParser := ini.NewPacmanParser()
 	pacmanPatcher := &ini.Patcher{}
 
-	replaceComments := section.GetFirst("config_parser/replace_comments", "true")
-	if val, err := strconv.ParseBool(replaceComments); err == nil && val {
-		pacmanPatcher.ReplaceComments = true
+	replaceCommentsString := section.GetFirst("config_parser/replace_comments", "true")
+	replaceComments, err := strconv.ParseBool(replaceCommentsString)
+	if err != nil {
+		return fmt.Errorf("invalid value for 'replace_comments' field in config_parser section: %s", replaceCommentsString)
 	}
+	pacmanPatcher.ReplaceComments = replaceComments
 
 	pacmanModifications := map[string]interface{}{}
 	addPacmanOption := func(key, value string) {
@@ -621,107 +802,98 @@ func getAllSections(section *parser.Section, key string) []*parser.Section {
 	return sections
 }
 
-// This function is the same as getAll() but automatically adds the `+bare` tag to the last item.
-func getAllKernels(section *parser.Section, key string) []string {
-	kernels := getAll(section, key)
-	items := section.GetAll(key)
-	if len(items) > 0 && (len(kernels) == 0 || kernels[len(kernels)-1] != items[len(items)-1]) {
-		kernels = append(kernels, items[len(items)-1])
+// createFlatpakIdentifier creates a standardized identifier for Flatpak resources
+// Format: "[installation]:name" if specific system-wide installation was specified
+// Format: ":name" if specified to use per-user installation
+// Format: "default:name" if no installation was specified (default system-wide installation)
+func createFlatpakIdentifier(name, installation string, userInstallation bool) string {
+	if installation != "" {
+		return installation + ":" + name
 	}
-	return kernels
+	if userInstallation {
+		return ":" + name
+	}
+	return "default:" + name
 }
 
-// This function is the same as section.GetAll(), but if an item has spaces, it will be split into multiple items.
-// It also supports tags. For example, `package = linux-headers linux-firmware, +bare` needs to be split into `linux-headers` and `linux-firmware`.
-func getAll(section *parser.Section, key string) []string {
-	items := section.GetAll(key)
-	result := []string{}
-	for i := 0; i < len(items); i++ {
-		included := true
+func getFlatpakRemoteIdentifiers(remotes []*parser.Section) []string {
+	identifiers := []string{}
+	for _, remote := range remotes {
+		name := remote.GetFirst("name", "")
 
-		parts := strings.Split(items[i], ",")
-
-		// Check for tagging, e.g., "pkg, +!bare" etc.
-		if len(parts) > 1 {
-			tagPart := strings.TrimSpace(parts[1])
-			linkedTags := strings.Fields(tagPart)
-
-			for _, linkedTag := range linkedTags {
-				if !strings.HasPrefix(linkedTag, "+") {
-					// TODO: Error in verification
-					continue
-				}
-
-				tagName := strings.TrimPrefix(linkedTag, "+")
-				isRequired := false
-				if strings.HasPrefix(tagName, "!") {
-					included = false
-					tagName = strings.TrimPrefix(tagName, "!")
-					isRequired = true
-				}
-
-				for _, tag := range tags {
-					if tag == "+"+tagName || (!isRequired && tag == "+default") {
-						included = true
-					} else if tag == "-"+tagName || (!isRequired && tag == "-default") {
-						included = false
-					}
-				}
-			}
-		} else {
-			for _, tag := range tags {
-				if tag == "+default" {
-					included = true
-				} else if tag == "-default" {
-					included = false
-				}
-			}
+		userInstallString := remote.GetFirst("user_installation", "false")
+		userInstall, err := strconv.ParseBool(userInstallString)
+		if err != nil {
+			color.Set(color.FgRed)
+			fmt.Printf("Error parsing 'user_installation' field for remote '%s': %v\n", name, err)
+			color.Unset()
+			continue
 		}
 
-		if included {
-			valuesPart := strings.TrimSpace(parts[0])
-			values := strings.Fields(valuesPart)
+		installation := remote.GetFirst("installation", "")
 
-			result = append(result, values...)
+		if name != "" {
+			identifiers = append(identifiers, createFlatpakIdentifier(name, installation, userInstall))
 		}
 	}
-	return result
+	return identifiers
+}
+
+func getFlatpakPackages(section *parser.Section) []modules.FlatpakPackage {
+	if section == nil {
+		return []modules.FlatpakPackage{}
+	}
+
+	packages := []modules.FlatpakPackage{}
+
+	// Process packages from values
+	pkgNames := tagSet.GetAll(section, "packages/flatpak/package")
+	for _, pkgName := range pkgNames {
+		pkg, err := modules.FlatpakPackageFrom(pkgName)
+		if err != nil {
+			color.Set(color.FgRed)
+			fmt.Printf("Error parsing Flatpak package value: %v\n", err)
+			color.Unset()
+			continue
+		}
+		packages = append(packages, pkg)
+	}
+
+	// Process packages from sections
+	sections := getAllSections(section, "packages/flatpak/package")
+	for _, pkgSection := range sections {
+		names := tagSet.GetAll(pkgSection, "name")
+		for _, name := range names {
+			pkg, err := modules.FlatpakPackageFrom(pkgSection)
+			if err != nil {
+				color.Set(color.FgRed)
+				fmt.Printf("Error parsing Flatpak package section: %v\n", err)
+				color.Unset()
+				continue
+			}
+			pkg.Name = name
+			packages = append(packages, pkg)
+		}
+	}
+
+	return packages
+}
+
+func getFlatpakPackageIdentifiers(packages []modules.FlatpakPackage) []string {
+	names := make([]string, len(packages))
+	for i, pkg := range packages {
+		names[i] = createFlatpakIdentifier(pkg.Name, pkg.Installation, pkg.UserInstallation)
+	}
+	return names
 }
 
 func init() {
 	applyCmd.PersistentFlags().StringP("config", "c", "/etc/declarch/declarch.conf", "Configuration file")
 	applyCmd.PersistentFlags().BoolP("bare", "b", false, "Install only essential packages with the +bare tag (equivalent to --tags=\"-default +bare\")")
 
-	applyCmd.PersistentFlags().StringSliceVar(&tags, "tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
+	applyCmd.PersistentFlags().StringSlice("tags", []string{}, "List of tags to include/exclude, e.g. '-default +bare'")
 
 	applyCmd.PersistentFlags().BoolP("upgrade", "u", false, "Perform a system upgrade")
 
 	rootCmd.AddCommand(applyCmd)
-}
-
-func parserTester(section *parser.Section) {
-	fmt.Println(section.GetFirst("bakery/secrets/password", "!!!!"))
-	fmt.Println(section.GetAll("bakery/secrets/password"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("bakery/employees", "!!!!"))
-	fmt.Println(section.GetAll("bakery/employees"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("cakes/number", "!!!!"))
-	fmt.Println(section.GetAll("cakes/number"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("cakes/colors", "!!!!"))
-	fmt.Println(section.GetAll("cakes/colors"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("bakery/cakes/colors", "!!!!"))
-	fmt.Println(section.GetAll("bakery/cakes/colors"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("add_baker", "!!!!"))
-	fmt.Println(section.GetAll("add_baker"))
-	fmt.Println()
-	fmt.Println(section.GetFirst("abc", "!!!!"))
-	fmt.Println(section.GetAll("abc"))
-	fmt.Println()
-	fmt.Println()
-	output := section.Marshal(0)
-	fmt.Println(output)
 }

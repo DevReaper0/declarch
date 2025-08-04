@@ -6,8 +6,8 @@ import (
 	"github.com/DevReaper0/declarch/utils"
 )
 
-func MakepkgInstall(pkg string) error {
-	dir, err := os.MkdirTemp("", pkg)
+func MakepkgInstall(pkgName string) error {
+	dir, err := os.MkdirTemp("", pkgName)
 	if err != nil {
 		return err
 	}
@@ -18,7 +18,7 @@ func MakepkgInstall(pkg string) error {
 	}
 
 	err = utils.ExecCommand([]string{
-		"git", "clone", "https://aur.archlinux.org/" + pkg + ".git", dir,
+		"git", "clone", "https://aur.archlinux.org/" + pkgName + ".git", dir,
 	}, "", utils.NormalUser)
 	if err != nil {
 		return err

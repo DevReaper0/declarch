@@ -62,26 +62,22 @@ func Verify(section *parser.Section) string {
 		return v
 	}
 
-	// Validate pacman configuration options
-	if v := VerifyPacmanConfig(section); v != "" {
+	if v := verifyPacman(section); v != "" {
 		return v
 	}
 
-	for _, item := range section.GetAll("packages/pacman/package") {
-		if v := VerifyTags(item); v != "" {
-			return v
-		}
+	if v := verifyAUR(section); v != "" {
+		return v
 	}
-	for _, item := range section.GetAll("packages/aur/package") {
-		if v := VerifyTags(item); v != "" {
-			return v
-		}
+
+	if v := verifyFlatpak(section); v != "" {
+		return v
 	}
 
 	return ""
 }
 
-func VerifyPacmanConfig(section *parser.Section) string {
+func verifyPacman(section *parser.Section) string {
 	if v := VerifyString(section.GetFirst("packages/pacman/color", "true"), "true", "false"); v != "" {
 		return v
 	}
@@ -96,6 +92,66 @@ func VerifyPacmanConfig(section *parser.Section) string {
 			return fmt.Sprintf("Invalid value for parallel_downloads: %s", parallelDownloads)
 		}
 	}
+
+	for _, item := range section.GetAll("packages/pacman/package") {
+		if v := VerifyTags(item); v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func verifyAUR(section *parser.Section) string {
+	for _, item := range section.GetAll("packages/aur/package") {
+		if v := VerifyTags(item); v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func verifyFlatpak(section *parser.Section) string {
+	remoteSections := getAllSections(section, "packages/flatpak/remote")
+	for _, remote := range remoteSections {
+		name := remote.GetFirst("name", "")
+		if name == "" {
+			return "Flatpak remote section missing required 'name' field"
+		}
+
+		url := remote.GetFirst("url", "")
+		if url == "" {
+			return fmt.Sprintf("Flatpak remote '%s' missing required 'url' field", name)
+		}
+
+		if v := VerifyString(remote.GetFirst("user_installation", "false"), "true", "false"); v != "" {
+			return fmt.Sprintf("Flatpak remote '%s': %s", name, v)
+		}
+
+		if v := VerifyString(remote.GetFirst("disable", "false"), "true", "false"); v != "" {
+			return fmt.Sprintf("Flatpak remote '%s': %s", name, v)
+		}
+	}
+
+	for _, item := range section.GetAll("packages/flatpak/package") {
+		if v := VerifyTags(item); v != "" {
+			return v
+		}
+	}
+
+	packageSections := getAllSections(section, "packages/flatpak/package")
+	for _, pkg := range packageSections {
+		name := pkg.GetFirst("name", "")
+		if name == "" {
+			return "Flatpak package section missing required 'name' field"
+		}
+
+		if v := VerifyString(pkg.GetFirst("user_installation", "false"), "true", "false"); v != "" {
+			return fmt.Sprintf("Flatpak package '%s': %s", name, v)
+		}
+	}
+
 	return ""
 }
 
