@@ -75,20 +75,3 @@ func ExecCommand(command []string, dir string, username string) error {
 
 	return nil
 }
-
-func OpenEditor(filename string) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vim"
-	}
-
-	cmd := exec.Command(editor, filename)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to open editor: %w", err)
-	}
-	return nil
-}
