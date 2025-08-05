@@ -27,6 +27,10 @@ var applyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply configuration",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !CheckRoot() {
+			return
+		}
+
 		configPath, _ := cmd.Flags().GetString("config")
 		configPath, _ = filepath.Abs(configPath)
 

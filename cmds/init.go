@@ -15,6 +15,10 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Create a configuration file",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !CheckRoot() {
+			return
+		}
+
 		configPath, _ := cmd.Flags().GetString("config")
 		configPath, _ = filepath.Abs(configPath)
 

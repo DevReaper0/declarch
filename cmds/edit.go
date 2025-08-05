@@ -17,6 +17,10 @@ var editCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit configuration",
 	Run: func(cmd *cobra.Command, args []string) {
+		if !CheckRoot() {
+			return
+		}
+
 		configPath, _ := cmd.Flags().GetString("config")
 		configPath, _ = filepath.Abs(configPath)
 
