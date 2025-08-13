@@ -209,10 +209,11 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 		return err
 	}
 
-	// Temporary fix for the non-root commands since user management is not implemented yet.
-	// For now, a user must be defined the configuration and the user must already exist on the system.
-	// Otherwise, the "nobody" user will be used.
-	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
+	if err := applyUsers(section, previousSection); err != nil {
+		return fmt.Errorf("error applying user configuration: %w", err)
+	}
+
+	modules.PrimaryUser = section.GetFirst("users/primary_user", "nobody")
 
 	if err := applyKernels(section, previousSection); err != nil {
 		return fmt.Errorf("error applying kernel configuration: %w", err)
@@ -242,7 +243,7 @@ func Apply(section *parser.Section, previousSection *parser.Section) error {
 }
 
 func applyKernels(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+	hookSections := getAllSections(section, "packages/pacman/hook")
 
 	kernelList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedKernels, removedKernels := utils.GetDifferences(tagSet.GetAll(section, "essentials/kernel"), tagSet.GetAll(previousSection, "essentials/kernel"))
@@ -255,9 +256,11 @@ func applyKernels(section *parser.Section, previousSection *parser.Section) erro
 		pkgNames := strings.Fields(pkgNamesString)
 		for _, pkgName := range pkgNames {
 			pkg := modules.NewPackage(pkgName)
-			for _, hook := range packageCommandHooks {
-				if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-					pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+			for _, hookSection := range hookSections {
+				if hookSection.GetFirst("package", "") == pkgName {
+					if err := pkg.AddHook(hookSection); err != nil {
+						return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+					}
 				}
 			}
 			kernelList.Add(pkg)
@@ -275,9 +278,11 @@ func applyKernels(section *parser.Section, previousSection *parser.Section) erro
 
 	for _, pkgName := range removedKernels {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		kernelList.Add(pkg)
@@ -289,9 +294,11 @@ func applyKernels(section *parser.Section, previousSection *parser.Section) erro
 
 	for _, pkgName := range addedKernels {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		kernelList.Add(pkg)
@@ -304,16 +311,18 @@ func applyKernels(section *parser.Section, previousSection *parser.Section) erro
 }
 
 func applyBootloader(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+	hookSections := getAllSections(section, "packages/pacman/hook")
 
 	bootloaderList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedBootloader, removedBootloader := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/bootloader", "grub efibootmgr")), strings.Fields(previousSection.GetFirst("essentials/bootloader", "")))
 
 	for _, pkgName := range removedBootloader {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		bootloaderList.Add(pkg)
@@ -325,9 +334,11 @@ func applyBootloader(section *parser.Section, previousSection *parser.Section) e
 
 	for _, pkgName := range addedBootloader {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		bootloaderList.Add(pkg)
@@ -340,16 +351,18 @@ func applyBootloader(section *parser.Section, previousSection *parser.Section) e
 }
 
 func applyNetworkHandler(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+	hookSections := getAllSections(section, "packages/pacman/hook")
 
 	networkHandlerList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedNetworkHandler, removedNetworkHandler := utils.GetDifferences(strings.Fields(section.GetFirst("essentials/network_handler", "networkmanager")), strings.Fields(previousSection.GetFirst("essentials/network_handler", "")))
 
 	for _, pkgName := range removedNetworkHandler {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		networkHandlerList.Add(pkg)
@@ -361,9 +374,11 @@ func applyNetworkHandler(section *parser.Section, previousSection *parser.Sectio
 
 	for _, pkgName := range addedNetworkHandler {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		networkHandlerList.Add(pkg)
@@ -375,17 +390,156 @@ func applyNetworkHandler(section *parser.Section, previousSection *parser.Sectio
 	return nil
 }
 
+func applyUsers(section *parser.Section, previousSection *parser.Section) error {
+	hookSections := getAllSections(section, "users/hook")
+
+	currentUserSections := getAllSections(section, "users/user")
+	previousUserSections := getAllSections(previousSection, "users/user")
+
+	currentUsers := make(map[string]modules.User)
+	previousUsers := make(map[string]modules.User)
+
+	for _, userSection := range currentUserSections {
+		user, err := modules.UserFrom(userSection)
+		if err != nil {
+			return fmt.Errorf("error parsing user configuration: %w", err)
+		}
+		currentUsers[user.Username] = user
+	}
+
+	for _, userSection := range previousUserSections {
+		user, err := modules.UserFrom(userSection)
+		if err != nil {
+			return fmt.Errorf("error parsing previous user configuration: %w", err)
+		}
+		previousUsers[user.Username] = user
+	}
+
+	currentUsernames := make([]string, 0, len(currentUsers))
+	previousUsernames := make([]string, 0, len(previousUsers))
+
+	for username := range currentUsers {
+		currentUsernames = append(currentUsernames, username)
+	}
+	for username := range previousUsers {
+		previousUsernames = append(previousUsernames, username)
+	}
+
+	addedUsernames, removedUsernames := utils.GetDifferences(currentUsernames, previousUsernames)
+
+	for _, username := range removedUsernames {
+		user := previousUsers[username]
+
+		for _, hookSection := range hookSections {
+			hookUser := hookSection.GetFirst("user", "")
+			if hookUser == username {
+				hook, err := modules.HookFrom(hookSection, "create", "delete")
+				if err != nil {
+					return fmt.Errorf("error parsing hook for user %s: %w", username, err)
+				}
+				if hook.For == "delete" && hook.When == "before" {
+					if err := hook.Exec(); err != nil {
+						return fmt.Errorf("error running before delete hook for user %s: %w", username, err)
+					}
+				}
+			}
+		}
+
+		if err := modules.DeleteUser(username, user.CreateHome); err != nil {
+			return fmt.Errorf("error deleting user %s: %w", username, err)
+		}
+
+		for _, hookSection := range hookSections {
+			hookUser := hookSection.GetFirst("user", "")
+			if hookUser == username {
+				hook, err := modules.HookFrom(hookSection, "create", "delete")
+				if err != nil {
+					return fmt.Errorf("error parsing hook for user %s: %w", username, err)
+				}
+				if hook.For == "delete" && hook.When == "after" {
+					if err := hook.Exec(); err != nil {
+						return fmt.Errorf("error running after delete hook for user %s: %w", username, err)
+					}
+				}
+			}
+		}
+	}
+
+	for _, username := range addedUsernames {
+		user := currentUsers[username]
+
+		for _, hookSection := range hookSections {
+			hookUser := hookSection.GetFirst("user", "")
+			if hookUser == username {
+				hook, err := modules.HookFrom(hookSection, "create", "delete")
+				if err != nil {
+					return fmt.Errorf("error parsing hook for user %s: %w", username, err)
+				}
+				if hook.For == "create" && hook.When == "before" {
+					if err := hook.Exec(); err != nil {
+						return fmt.Errorf("error running before create hook for user %s: %w", username, err)
+					}
+				}
+			}
+		}
+
+		if err := modules.CreateUser(user); err != nil {
+			return fmt.Errorf("error creating user %s: %w", username, err)
+		}
+
+		for _, hookSection := range hookSections {
+			hookUser := hookSection.GetFirst("user", "")
+			if hookUser == username {
+				hook, err := modules.HookFrom(hookSection, "create", "delete")
+				if err != nil {
+					return fmt.Errorf("error parsing hook for user %s: %w", username, err)
+				}
+				if hook.For == "create" && hook.When == "after" {
+					if err := hook.Exec(); err != nil {
+						return fmt.Errorf("error running after create hook for user %s: %w", username, err)
+					}
+				}
+			}
+		}
+	}
+
+	for username, currentUser := range currentUsers {
+		if previousUser, exists := previousUsers[username]; exists {
+			needsModification := currentUser.FullName != previousUser.FullName ||
+				currentUser.Shell != previousUser.Shell ||
+				currentUser.CreateHome != previousUser.CreateHome ||
+				currentUser.HomeDir != previousUser.HomeDir
+
+			// Check if groups are different
+			if !needsModification {
+				addedGroups, removedGroups := utils.GetDifferences(currentUser.Groups, previousUser.Groups)
+				needsModification = len(addedGroups) > 0 || len(removedGroups) > 0
+			}
+
+			if needsModification {
+				if err := modules.ModifyUser(previousUser, currentUser); err != nil {
+					return fmt.Errorf("error modifying user %s: %w", username, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func applyPacman(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/pacman/hook")
+	hookSections := getAllSections(section, "packages/pacman/hook")
 
 	pacmanList := modules.NewPackageList(modules.PacmanInstall, modules.PacmanRemove)
 	addedPacmanPackages, removedPacmanPackages := utils.GetDifferences(tagSet.GetAll(section, "packages/pacman/package"), tagSet.GetAll(previousSection, "packages/pacman/package"))
 
 	for _, pkgName := range removedPacmanPackages {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		pacmanList.Add(pkg)
@@ -397,9 +551,11 @@ func applyPacman(section *parser.Section, previousSection *parser.Section) error
 
 	for _, pkgName := range addedPacmanPackages {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		pacmanList.Add(pkg)
@@ -412,7 +568,7 @@ func applyPacman(section *parser.Section, previousSection *parser.Section) error
 }
 
 func applyAUR(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/aur/hook")
+	hookSections := getAllSections(section, "packages/aur/hook")
 
 	aurHelper := section.GetFirst("packages/aur/helper", "makepkg")
 	aurInstall := func(pkgs interface{}) error { return modules.AURInstall(aurHelper, pkgs) }
@@ -421,9 +577,11 @@ func applyAUR(section *parser.Section, previousSection *parser.Section) error {
 
 	for _, pkgName := range removedAurPackages {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		aurList.Add(pkg)
@@ -435,9 +593,11 @@ func applyAUR(section *parser.Section, previousSection *parser.Section) error {
 
 	for _, pkgName := range addedAurPackages {
 		pkg := modules.NewPackage(pkgName)
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgName && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			if hookSection.GetFirst("package", "") == pkgName {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", pkgName, err)
+				}
 			}
 		}
 		aurList.Add(pkg)
@@ -450,7 +610,7 @@ func applyAUR(section *parser.Section, previousSection *parser.Section) error {
 }
 
 func applyFlatpak(section *parser.Section, previousSection *parser.Section) error {
-	packageCommandHooks := getAllSections(section, "packages/flatpak/hook")
+	hookSections := getAllSections(section, "packages/flatpak/hook")
 
 	autoInstallString := section.GetFirst("packages/flatpak/auto_install", "true")
 	autoInstall, err := strconv.ParseBool(autoInstallString)
@@ -548,9 +708,12 @@ func applyFlatpak(section *parser.Section, previousSection *parser.Section) erro
 		flatpakPackage := removedPackageObjs[pkgIdentifier]
 		pkg := modules.NewPackage(flatpakPackage)
 
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgIdentifier && hook.GetFirst("for", "install") == "remove" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			name := hookSection.GetFirst("package", "")
+			if name == flatpakPackage.Name || name == pkgIdentifier {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", flatpakPackage.Name, err)
+				}
 			}
 		}
 		flatpakList.Add(pkg)
@@ -564,9 +727,12 @@ func applyFlatpak(section *parser.Section, previousSection *parser.Section) erro
 		flatpakPackage := addedPackageObjs[pkgIdentifier]
 		pkg := modules.NewPackage(flatpakPackage)
 
-		for _, hook := range packageCommandHooks {
-			if hook.GetFirst("package", "") == pkgIdentifier && hook.GetFirst("for", "install") == "install" {
-				pkg.AddHook(hook.GetFirst("timing", "after"), hook.GetFirst("user", ""), hook.GetFirst("run", ""))
+		for _, hookSection := range hookSections {
+			name := hookSection.GetFirst("package", "")
+			if name == flatpakPackage.Name || name == pkgIdentifier {
+				if err := pkg.AddHook(hookSection); err != nil {
+					return fmt.Errorf("error adding hook for package %s: %w", flatpakPackage.Name, err)
+				}
 			}
 		}
 		flatpakList.Add(pkg)
@@ -584,10 +750,7 @@ func Upgrade(section *parser.Section) error {
 		modules.PrivilegeEscalationCommand = "su -c"
 	}
 
-	// Temporary fix for the non-root commands since user management is not implemented yet.
-	// For now, a user must be defined the configuration and the user must already exist on the system.
-	// Otherwise, the "nobody" user will be used.
-	utils.NormalUser = section.GetFirst("users/user/username", "nobody")
+	modules.PrimaryUser = section.GetFirst("users/primary_user", "nobody")
 
 	pacmanPackageCount := len(section.GetAll("packages/pacman/package"))
 	pacmanConfigured := pacmanPackageCount > 0
@@ -817,9 +980,9 @@ func getAllSections(section *parser.Section, key string) []*parser.Section {
 }
 
 // createFlatpakIdentifier creates a standardized identifier for Flatpak resources
-// Format: "[installation]:name" if specific system-wide installation was specified
-// Format: ":name" if specified to use per-user installation
-// Format: "default:name" if no installation was specified (default system-wide installation)
+// Format: "[installation]:[name]" if specific system-wide installation was specified
+// Format: ":[name]" if specified to use per-user installation
+// Format: "default:[name]" if no installation was specified (default system-wide installation)
 func createFlatpakIdentifier(name, installation string, userInstallation bool) string {
 	if installation != "" {
 		return installation + ":" + name

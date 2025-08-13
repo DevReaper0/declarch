@@ -29,7 +29,7 @@ func PacmanWrapperInstall(wrapper string, pkgNames []string) error {
 	if slices.Contains(rootPacmanWrappers, wrapper) {
 		user = ""
 	} else {
-		user = utils.NormalUser
+		user = PrimaryUser
 	}
 
 	return utils.ExecCommand(append([]string{
@@ -42,7 +42,7 @@ func PacmanWrapperSystemUpgrade(wrapper string) error {
 	if slices.Contains(rootPacmanWrappers, wrapper) {
 		user = ""
 	} else {
-		user = utils.NormalUser
+		user = PrimaryUser
 	}
 
 	return utils.ExecCommand([]string{

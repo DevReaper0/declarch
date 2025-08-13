@@ -29,9 +29,7 @@ func FlatpakPackageFrom(input interface{}) (FlatpakPackage, error) {
 			return pkg, fmt.Errorf("Flatpak package section is missing 'name' field")
 		}
 
-		if remote := v.GetFirst("remote", ""); remote != "" {
-			pkg.Remote = remote
-		}
+		pkg.Remote = v.GetFirst("remote", "")
 
 		{
 			userInstallationString := v.GetFirst("user_installation", "false")
@@ -41,18 +39,10 @@ func FlatpakPackageFrom(input interface{}) (FlatpakPackage, error) {
 			}
 			pkg.UserInstallation = userInstallation
 		}
+		pkg.Installation = v.GetFirst("installation", "")
 
-		if installation := v.GetFirst("installation", ""); installation != "" {
-			pkg.Installation = installation
-		}
-
-		if architecture := v.GetFirst("architecture", ""); architecture != "" {
-			pkg.Architecture = architecture
-		}
-
-		if subpath := v.GetFirst("subpath", ""); subpath != "" {
-			pkg.Subpath = subpath
-		}
+		pkg.Architecture = v.GetFirst("architecture", "")
+		pkg.Subpath = v.GetFirst("subpath", "")
 	case string:
 		pkg.Name = v
 	default:
@@ -100,10 +90,7 @@ func FlatpakRemoteFrom(input interface{}) (FlatpakRemote, error) {
 			}
 			remote.UserInstallation = userInstallation
 		}
-
-		if installation := v.GetFirst("installation", ""); installation != "" {
-			remote.Installation = installation
-		}
+		remote.Installation = v.GetFirst("installation", "")
 
 		{
 			disableString := v.GetFirst("disable", "false")
@@ -114,29 +101,12 @@ func FlatpakRemoteFrom(input interface{}) (FlatpakRemote, error) {
 			remote.Disable = disable
 		}
 
-		if title := v.GetFirst("title", ""); title != "" {
-			remote.Title = title
-		}
-
-		if comment := v.GetFirst("comment", ""); comment != "" {
-			remote.Comment = comment
-		}
-
-		if description := v.GetFirst("description", ""); description != "" {
-			remote.Description = description
-		}
-
-		if homepage := v.GetFirst("homepage", ""); homepage != "" {
-			remote.Homepage = homepage
-		}
-
-		if icon := v.GetFirst("icon", ""); icon != "" {
-			remote.Icon = icon
-		}
-
-		if defaultBranch := v.GetFirst("default_branch", ""); defaultBranch != "" {
-			remote.DefaultBranch = defaultBranch
-		}
+		remote.Title = v.GetFirst("title", "")
+		remote.Comment = v.GetFirst("comment", "")
+		remote.Description = v.GetFirst("description", "")
+		remote.Homepage = v.GetFirst("homepage", "")
+		remote.Icon = v.GetFirst("icon", "")
+		remote.DefaultBranch = v.GetFirst("default_branch", "")
 	case string:
 		remote.Name = v
 	default:
@@ -177,7 +147,7 @@ func FlatpakInstall(pkgs interface{}) error {
 		splitPkg := strings.Fields(pkgObj.Name)
 		args = append(args, splitPkg...)
 
-		if err := utils.ExecCommand(args, "", utils.NormalUser); err != nil {
+		if err := utils.ExecCommand(args, "", PrimaryUser); err != nil {
 			return fmt.Errorf("Failed to install flatpak package '%s': %w", pkgObj.Name, err)
 		}
 	}
@@ -209,7 +179,7 @@ func FlatpakRemove(pkgs interface{}) error {
 		splitPkg := strings.Fields(pkgObj.Name)
 		args = append(args, splitPkg...)
 
-		if err := utils.ExecCommand(args, "", utils.NormalUser); err != nil {
+		if err := utils.ExecCommand(args, "", PrimaryUser); err != nil {
 			return fmt.Errorf("Failed to remove flatpak package '%s': %w", pkgObj.Name, err)
 		}
 	}
@@ -220,7 +190,7 @@ func FlatpakRemove(pkgs interface{}) error {
 func FlatpakSystemUpgrade() error {
 	return utils.ExecCommand([]string{
 		"flatpak", "update", "--noninteractive", "--assumeyes",
-	}, "", utils.NormalUser)
+	}, "", PrimaryUser)
 }
 
 func FlatpakAddRemote(remote FlatpakRemote) error {
@@ -264,7 +234,7 @@ func FlatpakAddRemote(remote FlatpakRemote) error {
 
 	args = append(args, remote.Name, remote.URL)
 
-	return utils.ExecCommand(args, "", utils.NormalUser)
+	return utils.ExecCommand(args, "", PrimaryUser)
 }
 
 func FlatpakRemoveRemote(remote FlatpakRemote) error {
@@ -280,7 +250,7 @@ func FlatpakRemoveRemote(remote FlatpakRemote) error {
 
 	args = append(args, remote.Name)
 
-	return utils.ExecCommand(args, "", utils.NormalUser)
+	return utils.ExecCommand(args, "", PrimaryUser)
 }
 
 func FlatpakModifyRemote(remote FlatpakRemote) error {
@@ -326,5 +296,5 @@ func FlatpakModifyRemote(remote FlatpakRemote) error {
 
 	args = append(args, remote.Name)
 
-	return utils.ExecCommand(args, "", utils.NormalUser)
+	return utils.ExecCommand(args, "", PrimaryUser)
 }

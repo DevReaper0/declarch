@@ -1,35 +1,29 @@
 package modules
 
 import (
-	"strings"
-
-	"github.com/DevReaper0/declarch/utils"
+	"github.com/DevReaper0/declarch/parser"
 )
 
-type PackageHook struct {
-	Timing string // "before" or "after"
-	User   string
-	Run    string
-}
-
 type Package struct {
-	Value interface{}
-	Hooks []PackageHook
+	value interface{}
+	hooks []Hook
 }
 
 func NewPackage(value interface{}) *Package {
 	return &Package{
-		Value: value,
-		Hooks: make([]PackageHook, 0),
+		value: value,
+		hooks: make([]Hook, 0),
 	}
 }
 
-func (p *Package) AddHook(timing, user, run string) {
-	p.Hooks = append(p.Hooks, PackageHook{
-		Timing: timing,
-		User:   user,
-		Run:    run,
-	})
+func (p *Package) AddHook(section *parser.Section) error {
+	hook, err := HookFrom(section, "install", "remove")
+	if err != nil {
+		return err
+	}
+
+	p.hooks = append(p.hooks, hook)
+	return nil
 }
 
 type PackageList struct {
@@ -57,9 +51,9 @@ func (pl *PackageList) Clear() {
 func (pl *PackageList) Install() error {
 	// Run before hooks for all packages
 	for _, pkg := range pl.Packages {
-		for _, hook := range pkg.Hooks {
-			if hook.Timing == "before" && hook.Run != "" {
-				if err := runHook(hook); err != nil {
+		for _, hook := range pkg.hooks {
+			if hook.For == "install" && hook.When == "before" {
+				if err := hook.Exec(); err != nil {
 					return err
 				}
 			}
@@ -70,7 +64,7 @@ func (pl *PackageList) Install() error {
 	if len(pl.Packages) > 0 {
 		values := make([]interface{}, len(pl.Packages))
 		for i, pkg := range pl.Packages {
-			values[i] = pkg.Value
+			values[i] = pkg.value
 		}
 
 		if err := pl.InstallFunc(values); err != nil {
@@ -80,9 +74,9 @@ func (pl *PackageList) Install() error {
 
 	// Run after hooks for all packages
 	for _, pkg := range pl.Packages {
-		for _, hook := range pkg.Hooks {
-			if hook.Timing == "after" && hook.Run != "" {
-				if err := runHook(hook); err != nil {
+		for _, hook := range pkg.hooks {
+			if hook.For == "install" && hook.When == "after" {
+				if err := hook.Exec(); err != nil {
 					return err
 				}
 			}
@@ -93,19 +87,39 @@ func (pl *PackageList) Install() error {
 }
 
 func (pl *PackageList) Remove() error {
+	// Run before hooks for all packages
+	for _, pkg := range pl.Packages {
+		for _, hook := range pkg.hooks {
+			if hook.For == "remove" && hook.When == "before" {
+				if err := hook.Exec(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Remove all packages in one command
 	if len(pl.Packages) > 0 {
 		values := make([]interface{}, len(pl.Packages))
 		for i, pkg := range pl.Packages {
-			values[i] = pkg.Value
+			values[i] = pkg.value
 		}
 
 		if err := pl.RemoveFunc(values); err != nil {
 			return err
 		}
 	}
-	return nil
-}
 
-func runHook(hook PackageHook) error {
-	return utils.ExecCommand(strings.Fields(hook.Run), "", hook.User)
+	// Run after hooks for all packages
+	for _, pkg := range pl.Packages {
+		for _, hook := range pkg.hooks {
+			if hook.For == "remove" && hook.When == "after" {
+				if err := hook.Exec(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
 }

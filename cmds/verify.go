@@ -58,7 +58,12 @@ var verifyCmd = &cobra.Command{
 }
 
 func Verify(section *parser.Section) string {
-	if v := VerifyString(section.GetFirst("essentials/privilige_escalation", "sudo"), "sudo", "doas", "pkexec", "su"); v != "" {
+	privilegeEscalation := section.GetFirst("essentials/privilige_escalation", "sudo")
+	if !slices.Contains([]string{"sudo", "doas", "pkexec", "su"}, privilegeEscalation) {
+		return fmt.Sprintf("Value '%s' is not allowed for privilege escalation. Allowed values are: sudo, doas, pkexec, su", privilegeEscalation)
+	}
+
+	if v := verifyUsers(section); v != "" {
 		return v
 	}
 
@@ -77,16 +82,51 @@ func Verify(section *parser.Section) string {
 	return ""
 }
 
+func verifyUsers(section *parser.Section) string {
+	userSections := getAllSections(section, "users/user")
+	for _, userSection := range userSections {
+		username := userSection.GetFirst("username", "")
+		if username == "" {
+			return "User section missing required 'username' field"
+		}
+
+		createHome := userSection.GetFirst("create_home", "true")
+		if _, err := strconv.ParseBool(createHome); err != nil {
+			return fmt.Sprintf("User '%s': invalid value for 'create_home': %s", username, createHome)
+		}
+	}
+
+	hookSections := getAllSections(section, "users/hook")
+	for _, hookSection := range hookSections {
+		username := hookSection.GetFirst("user", "")
+		if username == "" {
+			return "User hook section missing required 'user' field"
+		}
+
+		if v := verifyHook(hookSection, "create", "delete", fmt.Sprintf("for user '%s'", username)); v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
 func verifyPacman(section *parser.Section) string {
-	if v := VerifyString(section.GetFirst("packages/pacman/color", "true"), "true", "false"); v != "" {
-		return v
+	color := section.GetFirst("packages/pacman/color", "true")
+	if _, err := strconv.ParseBool(color); err != nil {
+		return fmt.Sprintf("Invalid value for packages/pacman/color: %s", color)
 	}
-	if v := VerifyString(section.GetFirst("packages/pacman/verbose_pkg_lists", "false"), "true", "false"); v != "" {
-		return v
+
+	verbosePkgLists := section.GetFirst("packages/pacman/verbose_pkg_lists", "false")
+	if _, err := strconv.ParseBool(verbosePkgLists); err != nil {
+		return fmt.Sprintf("Invalid value for packages/pacman/verbose_pkg_lists: %s", verbosePkgLists)
 	}
-	if v := VerifyString(section.GetFirst("packages/pacman/i_love_candy", "false"), "true", "false"); v != "" {
-		return v
+
+	iLoveCandy := section.GetFirst("packages/pacman/i_love_candy", "false")
+	if _, err := strconv.ParseBool(iLoveCandy); err != nil {
+		return fmt.Sprintf("Invalid value for packages/pacman/i_love_candy: %s", iLoveCandy)
 	}
+
 	if parallelDownloads := section.GetFirst("packages/pacman/parallel_downloads", ""); parallelDownloads != "" {
 		if _, err := strconv.Atoi(parallelDownloads); err != nil {
 			return fmt.Sprintf("Invalid value for parallel_downloads: %s", parallelDownloads)
@@ -99,12 +139,36 @@ func verifyPacman(section *parser.Section) string {
 		}
 	}
 
+	hookSections := getAllSections(section, "packages/pacman/hook")
+	for _, hookSection := range hookSections {
+		pkgName := hookSection.GetFirst("package", "")
+		if pkgName == "" {
+			return "Pacman hook section missing required 'package' field"
+		}
+
+		if v := verifyHook(hookSection, "install", "remove", fmt.Sprintf("for Pacman package '%s'", pkgName)); v != "" {
+			return v
+		}
+	}
+
 	return ""
 }
 
 func verifyAUR(section *parser.Section) string {
 	for _, item := range section.GetAll("packages/aur/package") {
 		if v := VerifyTags(item); v != "" {
+			return v
+		}
+	}
+
+	hookSections := getAllSections(section, "packages/aur/hook")
+	for _, hookSection := range hookSections {
+		pkgName := hookSection.GetFirst("package", "")
+		if pkgName == "" {
+			return "AUR hook section missing required 'package' field"
+		}
+
+		if v := verifyHook(hookSection, "install", "remove", fmt.Sprintf("for AUR package '%s'", pkgName)); v != "" {
 			return v
 		}
 	}
@@ -125,12 +189,14 @@ func verifyFlatpak(section *parser.Section) string {
 			return fmt.Sprintf("Flatpak remote '%s' missing required 'url' field", name)
 		}
 
-		if v := VerifyString(remote.GetFirst("user_installation", "false"), "true", "false"); v != "" {
-			return fmt.Sprintf("Flatpak remote '%s': %s", name, v)
+		userInstallation := remote.GetFirst("user_installation", "false")
+		if _, err := strconv.ParseBool(userInstallation); err != nil {
+			return fmt.Sprintf("Flatpak remote '%s': invalid value for 'user_installation': %s", name, userInstallation)
 		}
 
-		if v := VerifyString(remote.GetFirst("disable", "false"), "true", "false"); v != "" {
-			return fmt.Sprintf("Flatpak remote '%s': %s", name, v)
+		disable := remote.GetFirst("disable", "false")
+		if _, err := strconv.ParseBool(disable); err != nil {
+			return fmt.Sprintf("Flatpak remote '%s': invalid value for 'disable': %s", name, disable)
 		}
 	}
 
@@ -147,9 +213,43 @@ func verifyFlatpak(section *parser.Section) string {
 			return "Flatpak package section missing required 'name' field"
 		}
 
-		if v := VerifyString(pkg.GetFirst("user_installation", "false"), "true", "false"); v != "" {
-			return fmt.Sprintf("Flatpak package '%s': %s", name, v)
+		userInstallation := pkg.GetFirst("user_installation", "false")
+		if _, err := strconv.ParseBool(userInstallation); err != nil {
+			return fmt.Sprintf("Flatpak package '%s': invalid value for 'user_installation': %s", name, userInstallation)
 		}
+	}
+
+	hookSections := getAllSections(section, "packages/flatpak/hook")
+	for _, hookSection := range hookSections {
+		pkgName := hookSection.GetFirst("package", "")
+		if pkgName == "" {
+			return "Flatpak hook section missing required 'package' field"
+		}
+
+		if v := verifyHook(hookSection, "install", "remove", fmt.Sprintf("for Flatpak package '%s'", pkgName)); v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+func verifyHook(section *parser.Section, additionTerm, removalTerm string, context string) string {
+	forValue := section.GetFirst("for", additionTerm)
+	if forValue != additionTerm && forValue != removalTerm {
+		return fmt.Sprintf("Invalid hook %s: 'for' value must be '%s' or '%s', got '%s'",
+			context, additionTerm, removalTerm, forValue)
+	}
+
+	when := section.GetFirst("when", "after")
+	if when != "before" && when != "after" {
+		return fmt.Sprintf("Invalid hook %s: 'when' value must be 'before' or 'after', got '%s'",
+			context, when)
+	}
+
+	run := section.GetFirst("run", "")
+	if run == "" {
+		return fmt.Sprintf("Invalid hook %s: 'run' field is required", context)
 	}
 
 	return ""
@@ -189,13 +289,6 @@ func VerifyTag(tag string) string {
 	}
 
 	return ""
-}
-
-func VerifyString(value string, allowedValues ...string) string {
-	if slices.Contains(allowedValues, value) {
-		return ""
-	}
-	return fmt.Sprintf("Value '%s' is not allowed. Allowed values are: %s", value, strings.Join(allowedValues, ", "))
 }
 
 func init() {

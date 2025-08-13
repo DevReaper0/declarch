@@ -13,6 +13,17 @@ import (
 	"github.com/fatih/color"
 )
 
+func GetApplicationPath(name string) string {
+	switch name {
+	case "bash":
+		return "/bin/bash"
+	case "zsh":
+		return "/bin/zsh"
+	default:
+		return name
+	}
+}
+
 func ExecCommand(command []string, dir string, username string) error {
 	if len(command) == 0 {
 		return fmt.Errorf("no command provided")
@@ -24,7 +35,11 @@ func ExecCommand(command []string, dir string, username string) error {
 	color.Set(color.FgCyan)
 	fmt.Print("\nRunning command: ")
 	color.Set(color.Bold)
-	fmt.Println(strings.Join(command, " "))
+	if len(command) > 1 && command[0] == "sh" && command[1] == "-c" {
+		fmt.Printf("sh -c %q\n", strings.Join(command[2:], " "))
+	} else {
+		fmt.Println(strings.Join(command, " "))
+	}
 	color.Unset()
 
 	cmd := exec.Command(command[0], command[1:]...)
@@ -36,7 +51,7 @@ func ExecCommand(command []string, dir string, username string) error {
 		cmd.Dir = absDir
 	}
 
-	if username != "" {
+	if username != "" && username != "root" {
 		userInfo, err := user.Lookup(username)
 		if err != nil {
 			return fmt.Errorf("failed to get user info for %s: %w", username, err)
